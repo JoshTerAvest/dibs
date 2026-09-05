@@ -1,6 +1,8 @@
 # dibs
 
-A local hub for **AI Agent Computer Use** that lets multiple agents share one Windows desktop. It exposes screenshot,
+**A local hub for AI Agent Computer Use. Let your AI agents call dibs on using your desktop.**
+
+It lets multiple agents share one Windows desktop by exposing screenshot,
 mouse, keyboard, and window control over HTTP and MCP, so a Claude Code session, a
 scheduled automation task, and a browsing agent can all drive the same machine without
 fighting each other — or without shoving the user out of their own chair.
