@@ -1,7 +1,7 @@
 [project]
 name = "dibs"
 version = "0.1.0"
-description = "Windows computer-use hub: one machine, many agents. HTTP + MCP, agent registration, exclusive input lease, audit log, dashboard."
+description = "A local hub for AI Agent Computer Use on Windows: one machine, many agents. HTTP + MCP, agent registration, exclusive input lease, audit log, dashboard."
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
