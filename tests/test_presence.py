@@ -3,6 +3,7 @@
 These drive the listener callbacks directly with fake events -- no real pynput hook is ever
 started, so these tests are safe to run on a machine someone is actively using.
 """
+
 from __future__ import annotations
 
 import time
@@ -21,6 +22,7 @@ class _FakeKey:
 # ---------------------------------------------------------------------------
 # agent-generated input is not human input
 # ---------------------------------------------------------------------------
+
 
 def test_injected_events_are_ignored():
     events = []
@@ -48,6 +50,7 @@ def test_agent_input_until_window_is_ignored():
 # ---------------------------------------------------------------------------
 # real human input
 # ---------------------------------------------------------------------------
+
 
 def test_real_human_move_updates_seconds_since_human():
     p = Presence(idle_after_s=5)
@@ -98,6 +101,7 @@ def test_snapshot_shape_and_values():
 # hotkey chords (ctrl+alt+shift+<P/Y/N/R>) don't read as "human wants the desk"
 # ---------------------------------------------------------------------------
 
+
 def test_bare_modifier_presses_do_not_count_as_human():
     calls = []
     p = Presence(idle_after_s=5, on_human_input=lambda: calls.append(1))
@@ -144,6 +148,7 @@ def test_partial_chord_key_still_counts_as_human():
 # ---------------------------------------------------------------------------
 # lifecycle
 # ---------------------------------------------------------------------------
+
 
 def test_stop_without_start_does_not_raise_or_hang():
     p = Presence(idle_after_s=1)

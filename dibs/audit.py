@@ -6,6 +6,7 @@ newest `keep_screenshots` files (older screenshot files are deleted; the audit r
 are never deleted). `agent_name` is intentionally NOT stored here (the schema in SPEC has no
 such column) — the caller (Hub) enriches rows with the name from the registry.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,21 +62,39 @@ class AuditLog:
         assert self._conn is not None, "AuditLog.open() not called"
         return self._conn
 
-    def record(self, *, agent_id: str, action: str, input_data: dict[str, Any] | None,
-               ok: bool, error: str | None, duration_ms: int, png: bytes | None = None) -> int:
+    def record(
+        self,
+        *,
+        agent_id: str,
+        action: str,
+        input_data: dict[str, Any] | None,
+        ok: bool,
+        error: str | None,
+        duration_ms: int,
+        png: bytes | None = None,
+    ) -> int:
         ts = _now_iso()
         cur = self.conn.execute(
             "INSERT INTO actions (ts, agent_id, action, input, ok, error, duration_ms, screenshot_path) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (ts, agent_id, action, json.dumps(input_data) if input_data is not None else None,
-             1 if ok else 0, error, duration_ms, None),
+            (
+                ts,
+                agent_id,
+                action,
+                json.dumps(input_data) if input_data is not None else None,
+                1 if ok else 0,
+                error,
+                duration_ms,
+                None,
+            ),
         )
         row_id = cur.lastrowid
         if png is not None:
             shot_path = self.shots_dir / f"{row_id}.png"
             shot_path.write_bytes(png)
-            self.conn.execute("UPDATE actions SET screenshot_path = ? WHERE id = ?",
-                               (str(shot_path), row_id))
+            self.conn.execute(
+                "UPDATE actions SET screenshot_path = ? WHERE id = ?", (str(shot_path), row_id)
+            )
         self.conn.commit()
         if png is not None:
             self._cleanup_screenshots()
@@ -85,7 +104,7 @@ class AuditLog:
         rows = self.conn.execute(
             "SELECT id, screenshot_path FROM actions WHERE screenshot_path IS NOT NULL ORDER BY id DESC"
         ).fetchall()
-        stale = rows[self.keep_screenshots:]
+        stale = rows[self.keep_screenshots :]
         if not stale:
             return
         for row_id, path in stale:
@@ -98,8 +117,10 @@ class AuditLog:
         self.conn.commit()
 
     def recent(self, limit: int = 50, agent_id: str | None = None) -> list[dict[str, Any]]:
-        query = ("SELECT id, ts, agent_id, action, input, ok, error, duration_ms, screenshot_path "
-                  "FROM actions")
+        query = (
+            "SELECT id, ts, agent_id, action, input, ok, error, duration_ms, screenshot_path "
+            "FROM actions"
+        )
         params: list[Any] = []
         if agent_id:
             query += " WHERE agent_id = ?"
@@ -108,18 +129,20 @@ class AuditLog:
         params.append(limit)
         rows = self.conn.execute(query, params).fetchall()
         out = []
-        for (row_id, ts, aid, action, input_json, ok, error, duration_ms, shot_path) in rows:
-            out.append({
-                "id": row_id,
-                "ts": ts,
-                "agent_id": aid,
-                "action": action,
-                "input": json.loads(input_json) if input_json else None,
-                "ok": bool(ok),
-                "error": error,
-                "duration_ms": duration_ms,
-                "screenshot_url": f"/v1/shots/{row_id}.png" if shot_path else None,
-            })
+        for row_id, ts, aid, action, input_json, ok, error, duration_ms, shot_path in rows:
+            out.append(
+                {
+                    "id": row_id,
+                    "ts": ts,
+                    "agent_id": aid,
+                    "action": action,
+                    "input": json.loads(input_json) if input_json else None,
+                    "ok": bool(ok),
+                    "error": error,
+                    "duration_ms": duration_ms,
+                    "screenshot_url": f"/v1/shots/{row_id}.png" if shot_path else None,
+                }
+            )
         return out
 
     def stats(self) -> dict[str, int]:

@@ -9,6 +9,7 @@ through unchanged -- pyautogui/Windows resolves the VK code (and applies SHIFT
 for you) via ``VkKeyScanW`` when the character isn't already in its static
 keyboard map.
 """
+
 from __future__ import annotations
 
 
@@ -45,7 +46,6 @@ _NAMED: dict[str, str] = {
     "left": "left",
     "right": "right",
     "space": "space",
-
     # Punctuation names
     "minus": "-",
     "plus": "+",
@@ -59,7 +59,6 @@ _NAMED: dict[str, str] = {
     "grave": "`",
     "bracketleft": "[",
     "bracketright": "]",
-
     # Misc named keys
     "print": "printscreen",
     "print_screen": "printscreen",
@@ -73,7 +72,6 @@ _NAMED: dict[str, str] = {
     "numlock": "numlock",
     "menu": "apps",
     "apps": "apps",
-
     # Modifiers
     "super": "win",
     "super_l": "win",
@@ -101,26 +99,28 @@ for _i in range(1, 25):
 # Numpad digits + common numpad operator keys.
 for _i in range(10):
     _NAMED[f"kp_{_i}"] = f"num{_i}"
-_NAMED.update({
-    "kp_enter": "enter",
-    "kp_add": "add",
-    "kp_subtract": "subtract",
-    "kp_decimal": "decimal",
-    "kp_separator": "separator",
-    "kp_divide": "divide",
-    "kp_multiply": "multiply",
-    # Navigation-cluster numpad keys (same physical action regardless of numlock).
-    "kp_home": "home",
-    "kp_end": "end",
-    "kp_up": "up",
-    "kp_down": "down",
-    "kp_left": "left",
-    "kp_right": "right",
-    "kp_page_up": "pageup",
-    "kp_page_down": "pagedown",
-    "kp_insert": "insert",
-    "kp_delete": "delete",
-})
+_NAMED.update(
+    {
+        "kp_enter": "enter",
+        "kp_add": "add",
+        "kp_subtract": "subtract",
+        "kp_decimal": "decimal",
+        "kp_separator": "separator",
+        "kp_divide": "divide",
+        "kp_multiply": "multiply",
+        # Navigation-cluster numpad keys (same physical action regardless of numlock).
+        "kp_home": "home",
+        "kp_end": "end",
+        "kp_up": "up",
+        "kp_down": "down",
+        "kp_left": "left",
+        "kp_right": "right",
+        "kp_page_up": "pageup",
+        "kp_page_down": "pagedown",
+        "kp_insert": "insert",
+        "kp_delete": "delete",
+    }
+)
 
 
 def to_pyautogui(name: str) -> str:

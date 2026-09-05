@@ -6,6 +6,7 @@ os.replace) so a crash mid-write can't corrupt them. Tokens are stored in plaint
 is a local trust boundary (the files live in a gitignored `data/` dir on the operator's own
 machine), not a multi-tenant secret store; see the final report for the tradeoff.
 """
+
 from __future__ import annotations
 
 import json
@@ -120,15 +121,18 @@ class Registry:
             self._save_secrets()
 
     def _save_agents(self) -> None:
-        raw = {a.agent_id: {
-            "name": a.name,
-            "purpose": a.purpose,
-            "token": a.token,
-            "created_at": a.created_at,
-            "last_seen": a.last_seen,
-            "action_count": a.action_count,
-            "revoked": a.revoked,
-        } for a in self._agents.values()}
+        raw = {
+            a.agent_id: {
+                "name": a.name,
+                "purpose": a.purpose,
+                "token": a.token,
+                "created_at": a.created_at,
+                "last_seen": a.last_seen,
+                "action_count": a.action_count,
+                "revoked": a.revoked,
+            }
+            for a in self._agents.values()
+        }
         _atomic_write_json(self.agents_path, raw)
 
     def _save_secrets(self) -> None:

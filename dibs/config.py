@@ -1,4 +1,5 @@
 """Settings. Owner: hub agent. YAML file + DIBS_* env overrides (nested via __)."""
+
 from __future__ import annotations
 
 import os
@@ -77,7 +78,7 @@ def _env_overrides(prefix: str = "DIBS_") -> dict[str, Any]:
     for env_key, raw_value in os.environ.items():
         if not env_key.startswith(prefix):
             continue
-        remainder = env_key[len(prefix):]
+        remainder = env_key[len(prefix) :]
         if not remainder:
             continue
         parts = [part.lower() for part in remainder.split("__")]

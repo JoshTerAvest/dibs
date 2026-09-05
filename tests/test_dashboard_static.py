@@ -3,6 +3,7 @@ together correctly, and that the mock server serves them plus /v1/state.
 
 Owner: dashboard agent.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -45,8 +46,19 @@ def test_mock_server_state_endpoint():
     resp = client.get("/v1/state")
     assert resp.status_code == 200
     body = resp.json()
-    for key in ("version", "uptime_s", "paused", "lease", "agents", "display", "stats", "config",
-                "mode", "human", "consent"):
+    for key in (
+        "version",
+        "uptime_s",
+        "paused",
+        "lease",
+        "agents",
+        "display",
+        "stats",
+        "config",
+        "mode",
+        "human",
+        "consent",
+    ):
         assert key in body
     for key in ("host", "port", "allow_launch", "mode", "overlay"):
         assert key in body["config"]

@@ -1,4 +1,5 @@
 """Tests for dibs/registry.py: agents + admin token, persisted to data_dir."""
+
 from __future__ import annotations
 
 from dibs.registry import Registry

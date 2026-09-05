@@ -17,6 +17,7 @@ with Escape (never Enter, so nothing is ever executed). `launch()` + `focus_wind
 window are verified against Calculator, which also holds no unsaved user data worth protecting.
 Kept short — a few seconds of actual mouse/keyboard activity.
 """
+
 from __future__ import annotations
 
 import struct
@@ -111,7 +112,7 @@ def test_clipboard_round_trip():
         original = desk.get_clipboard()
     except desk.DeskError:
         original = ""
-    marker = "dibs display test éè \U0001F600"
+    marker = "dibs display test éè \U0001f600"
     try:
         desk.set_clipboard(marker)
         time.sleep(0.05)
@@ -155,7 +156,7 @@ def test_type_and_key_combo_round_trip_via_run_dialog():
     assert win32gui.GetForegroundWindow() == win.hwnd
 
     try:
-        marker = "dibs test héllo wörld \U0001F44B"
+        marker = "dibs test héllo wörld \U0001f44b"
         desk.type_text(marker)
         time.sleep(0.2)
 

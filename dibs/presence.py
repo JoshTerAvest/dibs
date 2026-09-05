@@ -22,6 +22,7 @@ assumed to be one of our own hotkeys and is ignored too. The hub additionally ca
 `agent_input_until()` right after a hotkey fires, suppressing the trailing key-up events as a
 second layer of defense (belt and suspenders, per SPEC-v0.2 §1/§4).
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,7 +46,9 @@ _CHORD_MODIFIERS: dict[str, frozenset[str]] = {
 
 
 class Presence:
-    def __init__(self, idle_after_s: float, on_human_input: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self, idle_after_s: float, on_human_input: Callable[[], None] | None = None
+    ) -> None:
         self.idle_after_s = idle_after_s
         self.on_human_input = on_human_input
 
@@ -64,11 +67,14 @@ class Presence:
         from pynput import keyboard, mouse
 
         self._mouse_listener = mouse.Listener(
-            on_move=self._on_move, on_click=self._on_click, on_scroll=self._on_scroll,
+            on_move=self._on_move,
+            on_click=self._on_click,
+            on_scroll=self._on_scroll,
         )
         self._mouse_listener.daemon = True
         self._keyboard_listener = keyboard.Listener(
-            on_press=self._on_press, on_release=self._on_release,
+            on_press=self._on_press,
+            on_release=self._on_release,
         )
         self._keyboard_listener.daemon = True
         self._mouse_listener.start()

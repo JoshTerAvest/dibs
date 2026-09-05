@@ -7,13 +7,14 @@ no `dibs` package dependency, so you can copy it into another project or add
 
 ```python
 import sys
+
 sys.path.insert(0, "/path/to/dibs/clients/python")
 
 from dibs_client import DibsClient, DibsError
 
 client = DibsClient("http://127.0.0.1:7474")
-client.register("my-agent", "testing things")   # sets client.token
-client.acquire(ttl_s=60)                         # hold the desk lease
+client.register("my-agent", "testing things")  # sets client.token
+client.acquire(ttl_s=60)  # hold the desk lease
 
 client.click(400, 300)
 client.type("hello, world")

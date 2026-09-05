@@ -7,6 +7,7 @@ coroutine on the loop -- no `asyncio.Lock` needed. `acquire()` is `async` only b
 caller with `wait_s > 0` needs to block on an `asyncio.Event` until it's granted or times out;
 the state is always re-validated synchronously after that single await point.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -134,8 +135,9 @@ class LeaseManager:
 
     # ---- public API ----
 
-    async def acquire(self, agent_id: str, name: str, ttl_s: int | None = None,
-                       wait_s: float = 0) -> dict[str, Any]:
+    async def acquire(
+        self, agent_id: str, name: str, ttl_s: int | None = None, wait_s: float = 0
+    ) -> dict[str, Any]:
         ttl = self._clamp_ttl(ttl_s)
         wait_s = max(0.0, float(wait_s))
 
@@ -148,8 +150,9 @@ class LeaseManager:
         now = time.time()
         entry = self._find_entry(agent_id)
         if entry is None:
-            entry = QueueEntry(agent_id=agent_id, name=name, enqueued_at=now,
-                                since_poll=now, ttl_requested=ttl)
+            entry = QueueEntry(
+                agent_id=agent_id, name=name, enqueued_at=now, since_poll=now, ttl_requested=ttl
+            )
             self._queue.append(entry)
         else:
             entry.since_poll = now
@@ -163,15 +166,20 @@ class LeaseManager:
         except asyncio.TimeoutError:
             pass
 
-        if self._holder is not None and self._holder.agent_id == agent_id and not self._is_expired(self._holder):
+        if (
+            self._holder is not None
+            and self._holder.agent_id == agent_id
+            and not self._is_expired(self._holder)
+        ):
             return self._granted_dict(self._holder)
         # still queued (or timed out) -- refresh since_poll so we don't get swept for
         # having "not polled", and re-enqueue if we were dropped while waiting.
         now = time.time()
         entry = self._find_entry(agent_id)
         if entry is None:
-            entry = QueueEntry(agent_id=agent_id, name=name, enqueued_at=now,
-                                since_poll=now, ttl_requested=ttl)
+            entry = QueueEntry(
+                agent_id=agent_id, name=name, enqueued_at=now, since_poll=now, ttl_requested=ttl
+            )
             self._queue.append(entry)
         else:
             entry.since_poll = now

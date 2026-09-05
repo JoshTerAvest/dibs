@@ -5,6 +5,7 @@ All coordinates here are ABSOLUTE virtual-desktop pixels (real pixels; the proce
 Per-Monitor-V2 DPI aware — call set_dpi_aware() once at startup). Scaling to/from screenshot
 space is actions.py's job.
 """
+
 from __future__ import annotations
 
 import ctypes
@@ -41,18 +42,24 @@ class Screen:
     primary: bool
 
     def to_dict(self) -> dict:
-        return {"index": self.index, "x": self.x, "y": self.y, "width": self.width,
-                "height": self.height, "primary": self.primary}
+        return {
+            "index": self.index,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "primary": self.primary,
+        }
 
 
 @dataclass
 class Shot:
     png: bytes
-    width: int          # pixels of the returned PNG
+    width: int  # pixels of the returned PNG
     height: int
-    scale: float        # returned px / captured px (<= 1.0)
+    scale: float  # returned px / captured px (<= 1.0)
     screen: Screen
-    region: tuple[int, int, int, int] | None = None   # absolute (l, t, r, b) if a zoom
+    region: tuple[int, int, int, int] | None = None  # absolute (l, t, r, b) if a zoom
 
 
 @dataclass
@@ -60,14 +67,20 @@ class Window:
     hwnd: int
     title: str
     process: str
-    rect: tuple[int, int, int, int]   # (left, top, right, bottom) absolute
+    rect: tuple[int, int, int, int]  # (left, top, right, bottom) absolute
     visible: bool
     foreground: bool
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {"hwnd": self.hwnd, "title": self.title, "process": self.process,
-                "rect": list(self.rect), "visible": self.visible, "foreground": self.foreground}
+        return {
+            "hwnd": self.hwnd,
+            "title": self.title,
+            "process": self.process,
+            "rect": list(self.rect),
+            "visible": self.visible,
+            "foreground": self.foreground,
+        }
 
 
 class DeskError(RuntimeError):
@@ -111,6 +124,7 @@ def set_dpi_aware() -> None:
 # Screens / screenshots
 # ---------------------------------------------------------------------------
 
+
 def _scale_for(width: int, height: int, max_long_edge: int, max_pixels: int) -> float:
     long_edge = max(width, height)
     return min(1.0, max_long_edge / long_edge, math.sqrt(max_pixels / (width * height)))
@@ -124,15 +138,24 @@ def list_screens() -> list[Screen]:
         info = win32api.GetMonitorInfo(hmon)
         left, top, right, bottom = info["Monitor"]
         is_primary = bool(info.get("Flags", 0) & win32con.MONITORINFOF_PRIMARY)
-        raw.append({"x": left, "y": top, "width": right - left, "height": bottom - top,
-                    "primary": is_primary})
+        raw.append(
+            {
+                "x": left,
+                "y": top,
+                "width": right - left,
+                "height": bottom - top,
+                "primary": is_primary,
+            }
+        )
 
     primaries = [m for m in raw if m["primary"]]
     others = sorted((m for m in raw if not m["primary"]), key=lambda m: (m["x"], m["y"]))
     ordered = primaries + others
 
     return [
-        Screen(index=i, x=m["x"], y=m["y"], width=m["width"], height=m["height"], primary=m["primary"])
+        Screen(
+            index=i, x=m["x"], y=m["y"], width=m["width"], height=m["height"], primary=m["primary"]
+        )
         for i, m in enumerate(ordered)
     ]
 
@@ -170,8 +193,13 @@ def screenshot(screen: Screen, *, max_long_edge: int = 1568, max_pixels: int = 1
     return Shot(png=_encode_png(img), width=new_w, height=new_h, scale=scale, screen=screen)
 
 
-def zoom(screen: Screen, region_abs: tuple[int, int, int, int], *, max_long_edge: int = 1568,
-         max_pixels: int = 1_150_000) -> Shot:
+def zoom(
+    screen: Screen,
+    region_abs: tuple[int, int, int, int],
+    *,
+    max_long_edge: int = 1568,
+    max_pixels: int = 1_150_000,
+) -> Shot:
     """Capture an absolute region at native resolution; downscale only if it exceeds the limits."""
     set_dpi_aware()
     left, top, right, bottom = region_abs
@@ -183,8 +211,14 @@ def zoom(screen: Screen, region_abs: tuple[int, int, int, int], *, max_long_edge
         img = img.resize((new_w, new_h), Image.LANCZOS)
     else:
         new_w, new_h = width, height
-    return Shot(png=_encode_png(img), width=new_w, height=new_h, scale=scale, screen=screen,
-                region=region_abs)
+    return Shot(
+        png=_encode_png(img),
+        width=new_w,
+        height=new_h,
+        scale=scale,
+        screen=screen,
+        region=region_abs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +235,8 @@ def zoom(screen: Screen, region_abs: tuple[int, int, int, int], *, max_long_edge
 _motion_enabled = True
 _motion_speed = 1.0
 
-_MOTION_HZ = 90                 # sample rate for the driven path
-_SNAP_PX = 12.0                 # moves shorter than this snap instead of curving
+_MOTION_HZ = 90  # sample rate for the driven path
+_SNAP_PX = 12.0  # moves shorter than this snap instead of curving
 _SNAP_DURATION_S = 0.02
 _CLICK_SETTLE_RANGE_S = (0.04, 0.09)
 _DRAG_DURATION_RANGE_S = (0.25, 0.6)
@@ -229,8 +263,9 @@ def _minimum_jerk(u: float) -> float:
     return 10 * u**3 - 15 * u**4 + 6 * u**5
 
 
-def _bezier_path(x0: float, y0: float, x1: float, y1: float, duration: float,
-                  seed: int | None = None) -> list[tuple[float, float, float]]:
+def _bezier_path(
+    x0: float, y0: float, x1: float, y1: float, duration: float, seed: int | None = None
+) -> list[tuple[float, float, float]]:
     """Quadratic-Bezier path from (x0,y0) to (x1,y1) over `duration` seconds, sampled at
     `_MOTION_HZ`, eased by `_minimum_jerk`. The control point is offset from the chord's
     midpoint perpendicular to it by +-(4-10%) of the distance; `random.Random(seed)` picks the
@@ -259,8 +294,9 @@ def _bezier_path(x0: float, y0: float, x1: float, y1: float, duration: float,
     return path
 
 
-def motion_path(x0: float, y0: float, x1: float, y1: float, speed: float = 1.0,
-                 seed: int | None = None) -> list[tuple[float, float, float]]:
+def motion_path(
+    x0: float, y0: float, x1: float, y1: float, speed: float = 1.0, seed: int | None = None
+) -> list[tuple[float, float, float]]:
     """Pure function: a smooth, slightly-curved path from (x0,y0) to (x1,y1). Moves shorter than
     `_SNAP_PX` snap (two points, near-instant); longer moves get a Bezier eased by minimum-jerk,
     with duration `clamp(0.12 + dist/2200 / speed, 0.12, 0.8)`. Starts/ends exactly on the given
@@ -272,8 +308,9 @@ def motion_path(x0: float, y0: float, x1: float, y1: float, speed: float = 1.0,
     return _bezier_path(x0, y0, x1, y1, duration, seed)
 
 
-def estimate_motion_s(from_xy: tuple[float, float], to_xy: tuple[float, float],
-                       speed: float | None = None) -> float:
+def estimate_motion_s(
+    from_xy: tuple[float, float], to_xy: tuple[float, float], speed: float | None = None
+) -> float:
     """Best-effort duration of a human-like move between two absolute points, honouring
     `configure_motion` (0.0 when motion is disabled)."""
     if not _motion_enabled:
@@ -315,12 +352,14 @@ def _settle() -> None:
 # Mouse / keyboard (pyautogui)
 # ---------------------------------------------------------------------------
 
+
 def _guard(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except pyautogui.FailSafeException as e:
             raise FailsafeTriggered(str(e)) from e
+
     return wrapper
 
 
@@ -340,8 +379,14 @@ def mouse_move(x: int, y: int) -> None:
 
 
 @_guard
-def click(x: int | None, y: int | None, *, button: str = "left", clicks: int = 1,
-          modifiers: list[str] | None = None) -> None:
+def click(
+    x: int | None,
+    y: int | None,
+    *,
+    button: str = "left",
+    clicks: int = 1,
+    modifiers: list[str] | None = None,
+) -> None:
     """button in {left,right,middle}; clicks 1/2/3; None coords = current position.
     modifiers are pyautogui key names held for the duration of the click. When a coordinate is
     given and motion is enabled, travels there along a human-like path and settles 40-90ms
@@ -367,8 +412,9 @@ def click(x: int | None, y: int | None, *, button: str = "left", clicks: int = 1
 
 
 @_guard
-def drag(x0: int, y0: int, x1: int, y1: int, *, modifiers: list[str] | None = None,
-         duration: float = 0.3) -> None:
+def drag(
+    x0: int, y0: int, x1: int, y1: int, *, modifiers: list[str] | None = None, duration: float = 0.3
+) -> None:
     """Travels to (x0,y0) along a human-like path, presses, then drags to (x1,y1) along a
     second human-like path over 0.25-0.6s (clamped from `duration`), then releases. With motion
     disabled this is the old instant moveTo/mouseDown/moveTo/mouseUp."""
@@ -409,8 +455,14 @@ def mouse_up(button: str = "left") -> None:
 
 
 @_guard
-def scroll(direction: str, amount: int, x: int | None = None, y: int | None = None, *,
-           modifiers: list[str] | None = None) -> None:
+def scroll(
+    direction: str,
+    amount: int,
+    x: int | None = None,
+    y: int | None = None,
+    *,
+    modifiers: list[str] | None = None,
+) -> None:
     """direction in {up,down,left,right}; amount in wheel clicks. When a coordinate is given
     and motion is enabled, travels there along a human-like path first (SPEC-v0.3 §2)."""
     set_dpi_aware()
@@ -625,10 +677,16 @@ def list_windows() -> list[Window]:
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
         except Exception:
             pid = 0
-        windows.append(Window(
-            hwnd=hwnd, title=title, process=_process_name(pid), rect=rect,
-            visible=True, foreground=(hwnd == fg),
-        ))
+        windows.append(
+            Window(
+                hwnd=hwnd,
+                title=title,
+                process=_process_name(pid),
+                rect=rect,
+                visible=True,
+                foreground=(hwnd == fg),
+            )
+        )
 
     win32gui.EnumWindows(_cb, None)
     windows.sort(key=lambda w: 0 if w.foreground else 1)
@@ -685,13 +743,20 @@ def focus_window(*, hwnd: int | None = None, title: str | None = None) -> Window
         if w.hwnd == target:
             return w
     # Window vanished between the focus call and the re-list; return best-effort info.
-    return Window(hwnd=target, title=win.title, process=win.process, rect=win.rect,
-                  visible=True, foreground=True)
+    return Window(
+        hwnd=target,
+        title=win.title,
+        process=win.process,
+        rect=win.rect,
+        visible=True,
+        foreground=True,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Clipboard
 # ---------------------------------------------------------------------------
+
 
 def _open_clipboard(retries: int = 10, delay: float = 0.05) -> None:
     last_exc: Exception | None = None
@@ -735,7 +800,8 @@ _CREATE_NEW_PROCESS_GROUP = 0x00000200
 def launch(command: str) -> int:
     """Start a process detached; return pid."""
     proc = subprocess.Popen(
-        command, shell=True,
+        command,
+        shell=True,
         creationflags=_DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP,
     )
     return proc.pid

@@ -1,4 +1,5 @@
 """Tests for dibs.actions — validation + dispatch. desk.* is fully monkeypatched (no display)."""
+
 from __future__ import annotations
 
 import base64
@@ -27,19 +28,31 @@ class Recorder:
         def _fn(*args, **kwargs):
             self.calls.append((name, args, kwargs))
             return None
+
         return _fn
 
 
 @pytest.fixture
 def rec(monkeypatch):
     r = Recorder()
-    for name in ("mouse_move", "click", "drag", "mouse_down", "mouse_up", "scroll",
-                 "type_text", "press_key", "hold_key", "set_clipboard"):
+    for name in (
+        "mouse_move",
+        "click",
+        "drag",
+        "mouse_down",
+        "mouse_up",
+        "scroll",
+        "type_text",
+        "press_key",
+        "hold_key",
+        "set_clipboard",
+    ):
         monkeypatch.setattr(desk, name, r.record(name))
     return r
 
 
 # --- coordinate mapping ------------------------------------------------------
+
 
 def test_screenshot_space_to_absolute_mapping(rec):
     actions.run_action({"action": "mouse_move", "coordinate": [715, 402]})
@@ -80,6 +93,7 @@ def test_unknown_screen(rec):
 
 # --- clicks / drag / scroll with modifiers -----------------------------------
 
+
 def test_left_click_no_coordinate_uses_current_position(rec, monkeypatch):
     monkeypatch.setattr(actions.desk, "cursor_position", lambda: (100, 100))
     actions.run_action({"action": "left_click"})
@@ -117,7 +131,9 @@ def test_click_unknown_modifier_raises_unknown_key(rec):
 
 
 def test_drag_maps_both_endpoints(rec):
-    actions.run_action({"action": "left_click_drag", "start_coordinate": [0, 0], "coordinate": [715, 402]})
+    actions.run_action(
+        {"action": "left_click_drag", "start_coordinate": [0, 0], "coordinate": [715, 402]}
+    )
     name, args, _kwargs = rec.calls[0]
     assert name == "drag"
     x0, y0, x1, y1 = args
@@ -140,10 +156,11 @@ def test_mouse_down_up_dispatch(rec):
 
 # --- type / key / hold_key ----------------------------------------------------
 
+
 def test_type_passes_text_through(rec):
-    actions.run_action({"action": "type", "text": "héllo \U0001F44B"})
+    actions.run_action({"action": "type", "text": "héllo \U0001f44b"})
     _name, args, _kwargs = rec.calls[0]
-    assert args[0] == "héllo \U0001F44B"
+    assert args[0] == "héllo \U0001f44b"
 
 
 def test_type_text_too_long_rejected():
@@ -199,6 +216,7 @@ def test_scroll_bad_direction_rejected():
 
 # --- wait ----------------------------------------------------------------------
 
+
 def test_wait_sleeps(monkeypatch):
     calls = []
     monkeypatch.setattr(actions.time, "sleep", lambda s: calls.append(s))
@@ -215,6 +233,7 @@ def test_wait_duration_bounds():
 
 
 # --- screenshot / zoom -----------------------------------------------------------
+
 
 def test_screenshot_result_shape(monkeypatch):
     shot = desk.Shot(png=b"PNGDATA", width=1430, height=804, scale=0.5586, screen=TWO_SCREENS[0])
@@ -236,7 +255,9 @@ def test_zoom_maps_region_and_calls_desk_zoom(monkeypatch):
     def fake_zoom(screen, region_abs, **kw):
         captured["screen"] = screen
         captured["region"] = region_abs
-        return desk.Shot(png=b"Z", width=100, height=100, scale=1.0, screen=screen, region=region_abs)
+        return desk.Shot(
+            png=b"Z", width=100, height=100, scale=1.0, screen=screen, region=region_abs
+        )
 
     monkeypatch.setattr(desk, "zoom", fake_zoom)
     result = actions.run_action({"action": "zoom", "region": [0, 0, 100, 100]})
@@ -258,6 +279,7 @@ def test_zoom_region_wrong_length_rejected():
 
 # --- cursor_position -------------------------------------------------------------
 
+
 def test_cursor_position_round_trip(monkeypatch):
     monkeypatch.setattr(desk, "cursor_position", lambda: (1280, 720))
     result = actions.run_action({"action": "cursor_position"})
@@ -270,9 +292,16 @@ def test_cursor_position_round_trip(monkeypatch):
 
 # --- windows ------------------------------------------------------------------
 
+
 def test_list_windows_text_table_and_data(monkeypatch):
-    win = desk.Window(hwnd=42, title="Notepad", process="notepad.exe", rect=(0, 0, 100, 100),
-                       visible=True, foreground=True)
+    win = desk.Window(
+        hwnd=42,
+        title="Notepad",
+        process="notepad.exe",
+        rect=(0, 0, 100, 100),
+        visible=True,
+        foreground=True,
+    )
     monkeypatch.setattr(desk, "list_windows", lambda: [win])
     result = actions.run_action({"action": "list_windows"})
     assert "42" in result.text
@@ -283,8 +312,14 @@ def test_list_windows_text_table_and_data(monkeypatch):
 
 
 def test_focus_window_by_title(monkeypatch):
-    win = desk.Window(hwnd=7, title="Notepad", process="notepad.exe", rect=(0, 0, 1, 1),
-                       visible=True, foreground=True)
+    win = desk.Window(
+        hwnd=7,
+        title="Notepad",
+        process="notepad.exe",
+        rect=(0, 0, 1, 1),
+        visible=True,
+        foreground=True,
+    )
     calls = {}
 
     def fake_focus(*, hwnd=None, title=None):
@@ -305,6 +340,7 @@ def test_focus_window_requires_hwnd_or_title():
 
 # --- clipboard -----------------------------------------------------------------
 
+
 def test_clipboard_get(monkeypatch):
     monkeypatch.setattr(desk, "get_clipboard", lambda: "hello")
     result = actions.run_action({"action": "get_clipboard"})
@@ -319,6 +355,7 @@ def test_clipboard_set(rec):
 
 
 # --- launch ----------------------------------------------------------------------
+
 
 def test_launch_disabled_by_default(monkeypatch):
     monkeypatch.setattr(desk, "launch", lambda cmd: 4242)
@@ -336,6 +373,7 @@ def test_launch_allowed_when_configured(monkeypatch):
 
 # --- validation / read-only set / to_dict shapes ---------------------------------
 
+
 def test_unknown_action_rejected():
     with pytest.raises(actions.ActionError) as ei:
         actions.run_action({"action": "frobnicate"})
@@ -349,9 +387,16 @@ def test_missing_action_field_rejected():
 
 
 def test_read_only_set_matches_spec():
-    assert actions.READ_ONLY_ACTIONS == frozenset({
-        "screenshot", "zoom", "cursor_position", "list_windows", "get_clipboard", "wait",
-    })
+    assert actions.READ_ONLY_ACTIONS == frozenset(
+        {
+            "screenshot",
+            "zoom",
+            "cursor_position",
+            "list_windows",
+            "get_clipboard",
+            "wait",
+        }
+    )
     for name in actions.READ_ONLY_ACTIONS:
         assert actions.is_read_only(name)
     assert not actions.is_read_only("left_click")
@@ -359,10 +404,28 @@ def test_read_only_set_matches_spec():
 
 def test_all_actions_covers_every_table_entry():
     expected = {
-        "screenshot", "zoom", "left_click", "right_click", "middle_click", "double_click",
-        "triple_click", "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up",
-        "cursor_position", "scroll", "type", "key", "hold_key", "wait", "list_windows",
-        "focus_window", "get_clipboard", "set_clipboard", "launch",
+        "screenshot",
+        "zoom",
+        "left_click",
+        "right_click",
+        "middle_click",
+        "double_click",
+        "triple_click",
+        "left_click_drag",
+        "mouse_move",
+        "left_mouse_down",
+        "left_mouse_up",
+        "cursor_position",
+        "scroll",
+        "type",
+        "key",
+        "hold_key",
+        "wait",
+        "list_windows",
+        "focus_window",
+        "get_clipboard",
+        "set_clipboard",
+        "launch",
     }
     assert actions.ALL_ACTIONS == frozenset(expected)
 

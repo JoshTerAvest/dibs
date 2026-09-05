@@ -1,131 +1,156 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dibs</title>
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dibs</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
 
-  <div id="token-gate" class="token-gate" hidden>
-    <div class="token-box">
-      <h2>Admin token required</h2>
-      <p>dibs asked for auth. Paste the admin token (<code>uv run dibs token</code>) — it's stored in this browser only.</p>
-      <input id="token-input" type="password" placeholder="admin token" autocomplete="off">
-      <button id="token-save" class="btn btn-accent">Save &amp; retry</button>
+    <div id="token-gate" class="token-gate" hidden>
+      <div class="token-box">
+        <h2>Admin token required</h2>
+        <p>
+          dibs asked for auth. Paste the admin token (<code>uv run dibs token</code>) — it's stored
+          in this browser only.
+        </p>
+        <input id="token-input" type="password" placeholder="admin token" autocomplete="off" />
+        <button id="token-save" class="btn btn-accent">Save &amp; retry</button>
+      </div>
     </div>
-  </div>
 
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-name">dibs</span>
-      <span id="host-port" class="host-port">connecting…</span>
-      <span id="uptime" class="uptime"></span>
-      <span id="config-strip" class="config-strip"></span>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-name">dibs</span>
+        <span id="host-port" class="host-port">connecting…</span>
+        <span id="uptime" class="uptime"></span>
+        <span id="config-strip" class="config-strip"></span>
+      </div>
+      <div class="status-controls">
+        <div id="mode-selector" class="mode-selector" role="group" aria-label="mode">
+          <button class="mode-btn" data-mode="ask">Ask me</button>
+          <button class="mode-btn" data-mode="hands_off">Hands-off</button>
+          <button class="mode-btn" data-mode="locked">Locked</button>
+        </div>
+        <span id="human-chip" class="chip chip-unknown">Human: …</span>
+        <span id="status-pill" class="pill pill-unknown">…</span>
+        <button id="btn-pause" class="btn btn-danger">Pause</button>
+        <button id="btn-resume" class="btn btn-accent" hidden>Resume</button>
+        <button id="btn-release" class="btn btn-outline">Take the desk back</button>
+      </div>
+    </header>
+
+    <div id="consent-wrap" class="consent-wrap" hidden>
+      <div class="consent-card">
+        <div class="consent-head">
+          <span class="consent-title">Desk request</span>
+          <span id="consent-countdown" class="consent-countdown"></span>
+        </div>
+        <div class="consent-body">
+          <div><span id="consent-agent" class="consent-agent"></span> wants the desk</div>
+          <div id="consent-purpose" class="consent-purpose"></div>
+        </div>
+        <div class="consent-actions">
+          <button id="btn-consent-allow" class="btn btn-accent">Allow 5 min</button>
+          <button id="btn-consent-deny" class="btn btn-outline">Deny</button>
+        </div>
+        <div class="consent-bar-track"><div id="consent-bar" class="consent-bar"></div></div>
+      </div>
     </div>
-    <div class="status-controls">
-      <div id="mode-selector" class="mode-selector" role="group" aria-label="mode">
-        <button class="mode-btn" data-mode="ask">Ask me</button>
-        <button class="mode-btn" data-mode="hands_off">Hands-off</button>
-        <button class="mode-btn" data-mode="locked">Locked</button>
-      </div>
-      <span id="human-chip" class="chip chip-unknown">Human: …</span>
-      <span id="status-pill" class="pill pill-unknown">…</span>
-      <button id="btn-pause" class="btn btn-danger">Pause</button>
-      <button id="btn-resume" class="btn btn-accent" hidden>Resume</button>
-      <button id="btn-release" class="btn btn-outline">Take the desk back</button>
-    </div>
-  </header>
 
-  <div id="consent-wrap" class="consent-wrap" hidden>
-    <div class="consent-card">
-      <div class="consent-head">
-        <span class="consent-title">Desk request</span>
-        <span id="consent-countdown" class="consent-countdown"></span>
-      </div>
-      <div class="consent-body">
-        <div><span id="consent-agent" class="consent-agent"></span> wants the desk</div>
-        <div id="consent-purpose" class="consent-purpose"></div>
-      </div>
-      <div class="consent-actions">
-        <button id="btn-consent-allow" class="btn btn-accent">Allow 5 min</button>
-        <button id="btn-consent-deny" class="btn btn-outline">Deny</button>
-      </div>
-      <div class="consent-bar-track"><div id="consent-bar" class="consent-bar"></div></div>
-    </div>
-  </div>
+    <main class="layout">
+      <section class="panel screenshot-panel">
+        <div class="panel-head">
+          <h2>Screen</h2>
+          <select id="screen-select"></select>
+          <span id="screenshot-meta" class="meta"></span>
+        </div>
+        <div id="screenshot-wrap" class="screenshot-wrap">
+          <img id="screenshot" alt="live screenshot" />
+        </div>
+      </section>
 
-  <main class="layout">
-    <section class="panel screenshot-panel">
-      <div class="panel-head">
-        <h2>Screen</h2>
-        <select id="screen-select"></select>
-        <span id="screenshot-meta" class="meta"></span>
-      </div>
-      <div id="screenshot-wrap" class="screenshot-wrap">
-        <img id="screenshot" alt="live screenshot">
-      </div>
-    </section>
+      <section class="panel desk-panel">
+        <div class="panel-head"><h2>Desk</h2></div>
+        <div id="desk-holder" class="desk-holder">
+          <p class="empty">🐑 Nobody has dibs. The desk is all yours.</p>
+        </div>
+        <div class="desk-queue">
+          <h3>Queue</h3>
+          <ol id="queue-list">
+            <li class="empty">empty</li>
+          </ol>
+        </div>
+        <div class="consent-recent">
+          <h3>Recent decisions</h3>
+          <ul id="consent-recent-list">
+            <li class="empty">none yet</li>
+          </ul>
+        </div>
+        <button id="btn-force-release" class="btn btn-outline" disabled>Revoke dibs</button>
+      </section>
 
-    <section class="panel desk-panel">
-      <div class="panel-head"><h2>Desk</h2></div>
-      <div id="desk-holder" class="desk-holder">
-        <p class="empty">🐑 Nobody has dibs. The desk is all yours.</p>
-      </div>
-      <div class="desk-queue">
-        <h3>Queue</h3>
-        <ol id="queue-list"><li class="empty">empty</li></ol>
-      </div>
-      <div class="consent-recent">
-        <h3>Recent decisions</h3>
-        <ul id="consent-recent-list"><li class="empty">none yet</li></ul>
-      </div>
-      <button id="btn-force-release" class="btn btn-outline" disabled>Revoke dibs</button>
-    </section>
+      <section class="panel stats-panel">
+        <div class="panel-head"><h2>Stats</h2></div>
+        <div class="stats-strip">
+          <div class="stat">
+            <span id="stat-total" class="stat-num">–</span><span class="stat-label">actions</span>
+          </div>
+          <div class="stat">
+            <span id="stat-failed" class="stat-num">–</span><span class="stat-label">failed</span>
+          </div>
+          <div class="stat">
+            <span id="stat-5m" class="stat-num">–</span><span class="stat-label">last 5m</span>
+          </div>
+        </div>
+      </section>
 
-    <section class="panel stats-panel">
-      <div class="panel-head"><h2>Stats</h2></div>
-      <div class="stats-strip">
-        <div class="stat"><span id="stat-total" class="stat-num">–</span><span class="stat-label">actions</span></div>
-        <div class="stat"><span id="stat-failed" class="stat-num">–</span><span class="stat-label">failed</span></div>
-        <div class="stat"><span id="stat-5m" class="stat-num">–</span><span class="stat-label">last 5m</span></div>
-      </div>
-    </section>
+      <section class="panel agents-panel">
+        <div class="panel-head"><h2>Agents</h2></div>
+        <div class="table-wrap">
+          <table id="agents-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>ID</th>
+                <th>Purpose</th>
+                <th>Last seen</th>
+                <th>Actions</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="agents-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-    <section class="panel agents-panel">
-      <div class="panel-head"><h2>Agents</h2></div>
-      <div class="table-wrap">
-        <table id="agents-table">
-          <thead>
-            <tr>
-              <th>Name</th><th>ID</th><th>Purpose</th><th>Last seen</th><th>Actions</th><th>Status</th><th></th>
-            </tr>
-          </thead>
-          <tbody id="agents-body"></tbody>
-        </table>
-      </div>
-    </section>
+      <section class="panel audit-panel">
+        <div class="panel-head">
+          <h2>Audit</h2>
+          <input id="audit-filter" type="text" placeholder="filter by agent" />
+        </div>
+        <div class="table-wrap">
+          <table id="audit-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Agent</th>
+                <th>Action</th>
+                <th>Input</th>
+                <th></th>
+                <th>Result</th>
+                <th>ms</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
 
-    <section class="panel audit-panel">
-      <div class="panel-head">
-        <h2>Audit</h2>
-        <input id="audit-filter" type="text" placeholder="filter by agent">
-      </div>
-      <div class="table-wrap">
-        <table id="audit-table">
-          <thead>
-            <tr>
-              <th>Time</th><th>Agent</th><th>Action</th><th>Input</th><th></th><th>Result</th><th>ms</th>
-            </tr>
-          </thead>
-          <tbody id="audit-body"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
-
-  <script src="app.js"></script>
-</body>
+    <script src="app.js"></script>
+  </body>
 </html>

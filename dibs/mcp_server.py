@@ -41,6 +41,7 @@ silently never starts. We handle this two ways so server.py doesn't have to do a
      inside a combined lifespan) for a clean, explicit shutdown. Whether or not it does, the
      self-start fallback means requests work either way.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -156,6 +157,7 @@ FOCUS_WINDOW_DESCRIPTION = (
 # Hub error -> tool-facing message
 # ---------------------------------------------------------------------------
 
+
 def _seconds_until(iso_ts: Any) -> int | None:
     """Best-effort `iso_ts - now`, rounded to whole seconds, or None if unparseable."""
     if not isinstance(iso_ts, str) or not iso_ts:
@@ -251,7 +253,9 @@ def _result_to_content(result: Any) -> list[Any]:
 async def _run_action(hub: Hub, action: dict[str, Any]) -> list[Any]:
     agent = _require_agent()
     try:
-        result = await hub.run(agent, action, auto_lease=True, wait_s=hub.settings.auto_lease_wait_s)
+        result = await hub.run(
+            agent, action, auto_lease=True, wait_s=hub.settings.auto_lease_wait_s
+        )
     except HubError as exc:
         raise ToolError(_format_hub_error(exc)) from exc
     return _result_to_content(result)
@@ -260,6 +264,7 @@ async def _run_action(hub: Hub, action: dict[str, Any]) -> list[Any]:
 # ---------------------------------------------------------------------------
 # Tool registration
 # ---------------------------------------------------------------------------
+
 
 def _register_tools(mcp: FastMCP, hub: Hub) -> None:
     # structured_output=False on the list[Any]-returning tools below: their content mixes
@@ -343,6 +348,7 @@ def _register_tools(mcp: FastMCP, hub: Hub) -> None:
 # ---------------------------------------------------------------------------
 # ASGI plumbing: self-starting session manager + bearer auth
 # ---------------------------------------------------------------------------
+
 
 class _RawStreamableHTTPApp:
     """Dispatches every http scope straight to the FastMCP session manager, bypassing
@@ -437,11 +443,16 @@ def _bearer_token(scope: dict) -> str | None:
 
 async def _send_json(send: Any, status: int, payload: dict[str, Any]) -> None:
     body = json.dumps(payload).encode("utf-8")
-    await send({
-        "type": "http.response.start",
-        "status": status,
-        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
-    })
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
     await send({"type": "http.response.body", "body": body})
 
 

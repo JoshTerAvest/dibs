@@ -1,4 +1,5 @@
 """Tests for dibs.keymap. Pure string mapping — no display needed."""
+
 from __future__ import annotations
 
 import pytest
@@ -83,17 +84,20 @@ def test_single_character_passthrough(ch):
     assert keymap.to_pyautogui(ch) == ch
 
 
-@pytest.mark.parametrize("text,expected", [
-    ("ctrl+shift+t", ["ctrl", "shift", "t"]),
-    ("alt+F4", ["alt", "f4"]),
-    ("ctrl+c", ["ctrl", "c"]),
-    ("super+r", ["win", "r"]),
-    ("shift", ["shift"]),
-    ("a", ["a"]),
-    ("A", ["A"]),
-    ("ctrl+shift+Left", ["ctrl", "shift", "left"]),
-    ("Control_L+Alt_L+Delete", ["ctrl", "alt", "delete"]),
-])
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("ctrl+shift+t", ["ctrl", "shift", "t"]),
+        ("alt+F4", ["alt", "f4"]),
+        ("ctrl+c", ["ctrl", "c"]),
+        ("super+r", ["win", "r"]),
+        ("shift", ["shift"]),
+        ("a", ["a"]),
+        ("A", ["A"]),
+        ("ctrl+shift+Left", ["ctrl", "shift", "left"]),
+        ("Control_L+Alt_L+Delete", ["ctrl", "alt", "delete"]),
+    ],
+)
 def test_parse_combo(text, expected):
     assert keymap.parse_combo(text) == expected
 

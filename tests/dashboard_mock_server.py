@@ -9,6 +9,7 @@ dashboard directory (dibs/dashboard/) at "/".
 Run: `uv run python tests/dashboard_mock_server.py --port 7475`
 Import: `from dashboard_mock_server import app` (used by test_dashboard_static.py).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -133,8 +134,18 @@ CONSENT_WINDOWS: list[dict[str, Any]] = [
 ]
 
 CONSENT_RECENT: list[dict[str, Any]] = [
-    {"request_id": "req-7a10", "agent_id": "night-queue-9c2d", "decision": "allow", "at": _iso(_now_at_start - timedelta(minutes=4))},
-    {"request_id": "req-5b02", "agent_id": "old-bot-55zz", "decision": "deny", "at": _iso(_now_at_start - timedelta(minutes=12))},
+    {
+        "request_id": "req-7a10",
+        "agent_id": "night-queue-9c2d",
+        "decision": "allow",
+        "at": _iso(_now_at_start - timedelta(minutes=4)),
+    },
+    {
+        "request_id": "req-5b02",
+        "agent_id": "old-bot-55zz",
+        "decision": "deny",
+        "at": _iso(_now_at_start - timedelta(minutes=12)),
+    },
 ]
 
 
@@ -147,12 +158,15 @@ def _resolve_expired_consent() -> None:
     ages out on its own and lands in `recent` with decision "timeout"."""
     global CONSENT_PENDING
     if CONSENT_PENDING and _parse_iso(CONSENT_PENDING["expires_at"]) <= _now():
-        CONSENT_RECENT.insert(0, {
-            "request_id": CONSENT_PENDING["request_id"],
-            "agent_id": CONSENT_PENDING["agent_id"],
-            "decision": "timeout",
-            "at": _iso(_now()),
-        })
+        CONSENT_RECENT.insert(
+            0,
+            {
+                "request_id": CONSENT_PENDING["request_id"],
+                "agent_id": CONSENT_PENDING["agent_id"],
+                "decision": "timeout",
+                "at": _iso(_now()),
+            },
+        )
         CONSENT_PENDING = None
 
 
@@ -190,8 +204,11 @@ def _apply_demo_cycle() -> None:
     step = _DEMO_STEPS[int((idle_for - _DEMO_IDLE_GATE_S) // _DEMO_STEP_S) % len(_DEMO_STEPS)]
     now = _now()
     agent_holder = {
-        "agent_id": "claude-code-7f3a", "name": "claude-code", "lease_id": "lease-demo",
-        "acquired_at": _iso(now - timedelta(seconds=5)), "expires_at": _iso(now + timedelta(seconds=55)),
+        "agent_id": "claude-code-7f3a",
+        "name": "claude-code",
+        "lease_id": "lease-demo",
+        "acquired_at": _iso(now - timedelta(seconds=5)),
+        "expires_at": _iso(now + timedelta(seconds=55)),
     }
     if step == "consent":
         PAUSED.update(paused=False, reason=None, paused_at=None)
@@ -199,9 +216,12 @@ def _apply_demo_cycle() -> None:
         MODE["mode"] = "ask"
         if not CONSENT_PENDING:
             CONSENT_PENDING = {
-                "request_id": "req-demo", "agent_id": "gemini-explorer-1a2b", "name": "gemini-explorer",
+                "request_id": "req-demo",
+                "agent_id": "gemini-explorer-1a2b",
+                "name": "gemini-explorer",
                 "purpose": "research browsing -- needs to click a link",
-                "requested_at": _iso(now - timedelta(seconds=2)), "expires_at": _iso(now + timedelta(seconds=55)),
+                "requested_at": _iso(now - timedelta(seconds=2)),
+                "expires_at": _iso(now + timedelta(seconds=55)),
             }
     elif step == "agent":
         CONSENT_PENDING = None
@@ -238,26 +258,106 @@ SCREEN_COLORS = {0: (26, 42, 74), 1: (58, 34, 74)}
 DISPLAY = {
     "screens": SCREENS,
     "default_screen": 0,
-    "screenshot": {"width": 1430, "height": 804, "scale": 0.5586, "max_long_edge": 1568, "max_pixels": 1150000},
+    "screenshot": {
+        "width": 1430,
+        "height": 804,
+        "scale": 0.5586,
+        "max_long_edge": 1568,
+        "max_pixels": 1150000,
+    },
 }
 
 _ACTION_TEMPLATES: list[dict[str, Any]] = [
-    {"action": "left_click", "input": {"coordinate": [715, 402]}, "ok": True, "duration_ms": 45, "shot": False},
-    {"action": "type", "input": {"text": "Hello from the dibs dashboard mock, this line is long"}, "ok": True, "duration_ms": 120, "shot": False},
+    {
+        "action": "left_click",
+        "input": {"coordinate": [715, 402]},
+        "ok": True,
+        "duration_ms": 45,
+        "shot": False,
+    },
+    {
+        "action": "type",
+        "input": {"text": "Hello from the dibs dashboard mock, this line is long"},
+        "ok": True,
+        "duration_ms": 120,
+        "shot": False,
+    },
     {"action": "screenshot", "input": {}, "ok": True, "duration_ms": 80, "shot": True},
-    {"action": "key", "input": {"text": "ctrl+alt+shift+p", "repeat": 1}, "ok": True, "duration_ms": 5, "shot": False},
-    {"action": "scroll", "input": {"scroll_direction": "down", "scroll_amount": 3, "coordinate": [400, 300]}, "ok": True, "duration_ms": 10, "shot": False},
-    {"action": "left_click_drag", "input": {"start_coordinate": [100, 100], "coordinate": [300, 300]}, "ok": True, "duration_ms": 310, "shot": False},
-    {"action": "zoom", "input": {"region": [0, 0, 500, 500]}, "ok": True, "duration_ms": 60, "shot": True},
-    {"action": "left_click", "input": {"coordinate": [200, 88]}, "ok": False, "error": "lease_required", "duration_ms": 2, "shot": False},
-    {"action": "focus_window", "input": {"title": "Notepad"}, "ok": True, "duration_ms": 15, "shot": False},
+    {
+        "action": "key",
+        "input": {"text": "ctrl+alt+shift+p", "repeat": 1},
+        "ok": True,
+        "duration_ms": 5,
+        "shot": False,
+    },
+    {
+        "action": "scroll",
+        "input": {"scroll_direction": "down", "scroll_amount": 3, "coordinate": [400, 300]},
+        "ok": True,
+        "duration_ms": 10,
+        "shot": False,
+    },
+    {
+        "action": "left_click_drag",
+        "input": {"start_coordinate": [100, 100], "coordinate": [300, 300]},
+        "ok": True,
+        "duration_ms": 310,
+        "shot": False,
+    },
+    {
+        "action": "zoom",
+        "input": {"region": [0, 0, 500, 500]},
+        "ok": True,
+        "duration_ms": 60,
+        "shot": True,
+    },
+    {
+        "action": "left_click",
+        "input": {"coordinate": [200, 88]},
+        "ok": False,
+        "error": "lease_required",
+        "duration_ms": 2,
+        "shot": False,
+    },
+    {
+        "action": "focus_window",
+        "input": {"title": "Notepad"},
+        "ok": True,
+        "duration_ms": 15,
+        "shot": False,
+    },
     {"action": "get_clipboard", "input": {}, "ok": True, "duration_ms": 3, "shot": False},
     {"action": "wait", "input": {"duration": 2}, "ok": True, "duration_ms": 2001, "shot": False},
     {"action": "list_windows", "input": {}, "ok": True, "duration_ms": 22, "shot": False},
-    {"action": "launch", "input": {"command": "notepad.exe"}, "ok": False, "error": "launch_disabled", "duration_ms": 1, "shot": False},
-    {"action": "double_click", "input": {"coordinate": [960, 540]}, "ok": True, "duration_ms": 38, "shot": False},
-    {"action": "mouse_move", "input": {"coordinate": [512, 256]}, "ok": True, "duration_ms": 8, "shot": False},
-    {"action": "set_clipboard", "input": {"text": "https://example.com/some/very/long/url/for/truncation/testing"}, "ok": True, "duration_ms": 4, "shot": False},
+    {
+        "action": "launch",
+        "input": {"command": "notepad.exe"},
+        "ok": False,
+        "error": "launch_disabled",
+        "duration_ms": 1,
+        "shot": False,
+    },
+    {
+        "action": "double_click",
+        "input": {"coordinate": [960, 540]},
+        "ok": True,
+        "duration_ms": 38,
+        "shot": False,
+    },
+    {
+        "action": "mouse_move",
+        "input": {"coordinate": [512, 256]},
+        "ok": True,
+        "duration_ms": 8,
+        "shot": False,
+    },
+    {
+        "action": "set_clipboard",
+        "input": {"text": "https://example.com/some/very/long/url/for/truncation/testing"},
+        "ok": True,
+        "duration_ms": 4,
+        "shot": False,
+    },
 ]
 
 _agent_cycle = [AGENTS[0], AGENTS[1], AGENTS[0], AGENTS[2], AGENTS[0]]
@@ -289,7 +389,6 @@ STATS = {"actions_total": 4213, "actions_failed": 13, "actions_last_5m": 9}
 OVERLAY_ENABLED = True
 
 
-
 def _config() -> dict[str, Any]:
     return {
         "host": "127.0.0.1",
@@ -298,6 +397,7 @@ def _config() -> dict[str, Any]:
         "mode": MODE["mode"],
         "overlay": OVERLAY_ENABLED,
     }
+
 
 # ---------------------------------------------------------------------------
 # App
@@ -325,7 +425,10 @@ def get_state() -> dict[str, Any]:
             "recent": CONSENT_RECENT[:10],
         },
         "lease": LEASE,
-        "agents": [{**a, "holding": (LEASE["holder"] or {}).get("agent_id") == a["agent_id"]} for a in AGENTS],
+        "agents": [
+            {**a, "holding": (LEASE["holder"] or {}).get("agent_id") == a["agent_id"]}
+            for a in AGENTS
+        ],
         "display": DISPLAY,
         "stats": STATS,
         "config": _config(),
@@ -427,17 +530,22 @@ async def admin_consent(request_id: str, request: Request) -> JSONResponse:
 
     pending = CONSENT_PENDING
     CONSENT_PENDING = None
-    CONSENT_RECENT.insert(0, {
-        "request_id": pending["request_id"],
-        "agent_id": pending["agent_id"],
-        "decision": decision,
-        "at": _iso(_now()),
-    })
-    if decision == "allow":
-        CONSENT_WINDOWS.append({
+    CONSENT_RECENT.insert(
+        0,
+        {
+            "request_id": pending["request_id"],
             "agent_id": pending["agent_id"],
-            "consent_until": _iso(_now() + timedelta(seconds=300)),
-        })
+            "decision": decision,
+            "at": _iso(_now()),
+        },
+    )
+    if decision == "allow":
+        CONSENT_WINDOWS.append(
+            {
+                "agent_id": pending["agent_id"],
+                "consent_until": _iso(_now() + timedelta(seconds=300)),
+            }
+        )
     return JSONResponse({"ok": True, "decision": decision})
 
 

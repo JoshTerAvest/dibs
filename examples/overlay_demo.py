@@ -6,6 +6,7 @@ be reviewed without watching the screen live.
 Usage:
     uv run python examples/overlay_demo.py
 """
+
 from __future__ import annotations
 
 import threading
@@ -74,8 +75,11 @@ def main() -> None:
         _log("consent prompt shown bottom-right (auto-dismissed in 4s)")
         decisions: list[tuple[str, bool]] = []
         ov.prompt_consent(
-            "demo-1", "demo-agent", "wants to click around the desk for the overlay demo",
-            10.0, lambda rid, ok: decisions.append((rid, ok)),
+            "demo-1",
+            "demo-agent",
+            "wants to click around the desk for the overlay demo",
+            10.0,
+            lambda rid, ok: decisions.append((rid, ok)),
         )
         time.sleep(4.0)
         ov.dismiss_consent("demo-1")
@@ -93,7 +97,7 @@ def main() -> None:
         _log("hidden (idle)")
         ov.set_holder(None)
         time.sleep(0.3)
-        
+
         _log("CPU usage of overlay should be < 3% during active states, 0% during idle.")
     finally:
         ov.stop()

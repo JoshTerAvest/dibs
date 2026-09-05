@@ -13,6 +13,7 @@ Registers itself as agent "claude-agent" against the dibs server (relying on
 (ANTHROPIC_API_KEY, or an active `ant auth login` profile) — otherwise it just proves the
 module imports and argument parsing work.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,16 +26,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "clients" / "pyt
 
 from dibs_client import DibsClient, DibsError, computer_tool_handler  # noqa: E402
 
-DEFAULT_TASK = "Take a screenshot and tell me which application is in the foreground. Do not click anything."
+DEFAULT_TASK = (
+    "Take a screenshot and tell me which application is in the foreground. Do not click anything."
+)
 NOT_EXECUTED_TEXT = "Not executed: an earlier computer action in this turn failed."
 MODEL = "claude-opus-5"
 
 # The computer_toolset_20260801 member action names (what a tool_use block's `name` will be).
-_COMPUTER_ACTIONS = frozenset({
-    "screenshot", "zoom", "left_click", "right_click", "middle_click", "double_click",
-    "triple_click", "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up",
-    "cursor_position", "scroll", "type", "key", "hold_key", "wait",
-})
+_COMPUTER_ACTIONS = frozenset(
+    {
+        "screenshot",
+        "zoom",
+        "left_click",
+        "right_click",
+        "middle_click",
+        "double_click",
+        "triple_click",
+        "left_click_drag",
+        "mouse_move",
+        "left_mouse_down",
+        "left_mouse_up",
+        "cursor_position",
+        "scroll",
+        "type",
+        "key",
+        "hold_key",
+        "wait",
+    }
+)
 
 
 def _has_anthropic_credentials() -> bool:
@@ -45,7 +64,9 @@ def _has_anthropic_credentials() -> bool:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return True
     try:
-        result = subprocess.run(["ant", "auth", "status"], capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            ["ant", "auth", "status"], capture_output=True, text=True, timeout=10
+        )
     except (OSError, subprocess.SubprocessError):
         return False
     if result.returncode != 0:
@@ -94,31 +115,37 @@ def run_agent(task: str, *, url: str, token: str | None, max_turns: int) -> str:
         failed = False
         for block in tool_use_blocks:
             if failed:
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "toolset_name": "computer",
-                    "is_error": True,
-                    "content": NOT_EXECUTED_TEXT,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "toolset_name": "computer",
+                        "is_error": True,
+                        "content": NOT_EXECUTED_TEXT,
+                    }
+                )
                 continue
             try:
                 content = handle_tool(block)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "toolset_name": "computer",
-                    "content": content,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "toolset_name": "computer",
+                        "content": content,
+                    }
+                )
             except DibsError as exc:
                 failed = True
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "toolset_name": "computer",
-                    "is_error": True,
-                    "content": str(exc),
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "toolset_name": "computer",
+                        "is_error": True,
+                        "content": str(exc),
+                    }
+                )
 
         messages.append({"role": "user", "content": tool_results})
 
@@ -136,7 +163,9 @@ def main() -> None:
     try:
         import anthropic  # noqa: F401
     except ImportError:
-        print("anthropic package not installed. Import + argument parsing checked OK; skipping the live call.")
+        print(
+            "anthropic package not installed. Import + argument parsing checked OK; skipping the live call."
+        )
         return
 
     if not _has_anthropic_credentials():

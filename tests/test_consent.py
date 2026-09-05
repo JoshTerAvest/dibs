@@ -6,6 +6,7 @@ waits. It's registered via the `fake_presence` fixture, which must be requested 
 test calls `make_client(...)` (fixtures always resolve before the test body runs, and Hub() --
 which constructs the Presence instance -- isn't built until `make_client(...)` is called).
 """
+
 from __future__ import annotations
 
 import time as time_mod
@@ -46,8 +47,11 @@ class FakePresence:
         return s is not None and s < self.idle_after_s
 
     def snapshot(self) -> dict:
-        return {"active": self.human_active(), "last_input_ago_s": self.seconds_since_human(),
-                "idle_after_s": self.idle_after_s}
+        return {
+            "active": self.human_active(),
+            "last_input_ago_s": self.seconds_since_human(),
+            "idle_after_s": self.idle_after_s,
+        }
 
     # ---- test-only helpers (not part of the real Presence API) ----
 
@@ -73,6 +77,7 @@ def fake_presence(monkeypatch):
 # ---------------------------------------------------------------------------
 # acquire flow: mode ask / hands_off / locked
 # ---------------------------------------------------------------------------
+
 
 def test_ask_mode_still_asks_when_human_idle(make_client, fake_presence):
     """Idle is not consent (9/4): an agent may not look at the screen just because nobody is there."""
@@ -104,7 +109,9 @@ def test_ask_mode_active_creates_consent_request_then_allow_grants(make_client, 
         assert pending["agent_id"] == agent["agent_id"]
         assert pending["request_id"] == body["request_id"]
 
-        allow_resp = client.post(f"/v1/admin/consent/{body['request_id']}", json={"decision": "allow"})
+        allow_resp = client.post(
+            f"/v1/admin/consent/{body['request_id']}", json={"decision": "allow"}
+        )
         assert allow_resp.status_code == 200
 
         granted = client.post("/v1/lease", json={"wait_s": 2}, headers=auth_headers(agent["token"]))
@@ -228,6 +235,7 @@ def test_consent_window_skips_a_second_prompt(make_client, fake_presence):
 # human takeover (SPEC-v0.2 §2.3)
 # ---------------------------------------------------------------------------
 
+
 def test_human_takeover_revokes_lease_and_pauses(make_client, fake_presence):
     with make_client(mode="hands_off", presence={"resume_after_s": 0.2}) as client:
         hub = client.app.state.hub
@@ -244,8 +252,9 @@ def test_human_takeover_revokes_lease_and_pauses(make_client, fake_presence):
         assert state["lease"]["holder"] is None
 
         # the interrupted agent's next input action -> 409 lease_required, "desk taken by human"
-        blocked = client.post("/v1/actions", json={"action": "key", "text": "a"},
-                               headers=auth_headers(agent["token"]))
+        blocked = client.post(
+            "/v1/actions", json={"action": "key", "text": "a"}, headers=auth_headers(agent["token"])
+        )
         assert blocked.status_code == 409
         body = blocked.json()
         assert body["error"] == "lease_required"
@@ -253,11 +262,15 @@ def test_human_takeover_revokes_lease_and_pauses(make_client, fake_presence):
         assert body["human_active"] is True
 
         # since 9/4 even a screenshot needs dibs, and the takeover revoked them -> 409; `wait` is free
-        ro = client.post("/v1/actions", json={"action": "screenshot"},
-                          headers=auth_headers(agent["token"]))
+        ro = client.post(
+            "/v1/actions", json={"action": "screenshot"}, headers=auth_headers(agent["token"])
+        )
         assert ro.status_code == 409
-        free = client.post("/v1/actions", json={"action": "wait", "duration": 0},
-                            headers=auth_headers(agent["token"]))
+        free = client.post(
+            "/v1/actions",
+            json={"action": "wait", "duration": 0},
+            headers=auth_headers(agent["token"]),
+        )
         assert free.status_code == 200
 
         # human goes idle -- auto-resume once the sweeper notices (ticks every 0.5s)
@@ -311,6 +324,7 @@ def test_admin_release_pauses_even_with_nobody_holding_the_desk(make_client, fak
 # admin routes: mode, consent decisions
 # ---------------------------------------------------------------------------
 
+
 def test_mode_route_sets_and_rejects_invalid(make_client):
     with make_client() as client:
         resp = client.post("/v1/admin/mode", json={"mode": "locked"})
@@ -354,6 +368,7 @@ def test_consent_decision_rejects_bad_decision_value(make_client, fake_presence)
 # hotkeys
 # ---------------------------------------------------------------------------
 
+
 def test_hotkey_parse_combo():
     assert hub_mod.Hub._parse_hotkey("ctrl+alt+shift+p") == "<ctrl>+<alt>+<shift>+p"
     assert hub_mod.Hub._parse_hotkey("ctrl+alt+shift+y") == "<ctrl>+<alt>+<shift>+y"
@@ -375,6 +390,7 @@ def test_hotkey_listener_registers_all_four_combos(make_client, monkeypatch):
             pass
 
     import pynput.keyboard as kb
+
     monkeypatch.setattr(kb, "GlobalHotKeys", _CapturingGlobalHotKeys)
 
     with make_client():
@@ -382,8 +398,12 @@ def test_hotkey_listener_registers_all_four_combos(make_client, monkeypatch):
 
     assert captured.get("combos") is not None
     assert len(captured["combos"]) == 4
-    for chord in ("<ctrl>+<alt>+<shift>+p", "<ctrl>+<alt>+<shift>+y",
-                  "<ctrl>+<alt>+<shift>+n", "<ctrl>+<alt>+<shift>+r"):
+    for chord in (
+        "<ctrl>+<alt>+<shift>+p",
+        "<ctrl>+<alt>+<shift>+y",
+        "<ctrl>+<alt>+<shift>+n",
+        "<ctrl>+<alt>+<shift>+r",
+    ):
         assert chord in captured["combos"]
 
 

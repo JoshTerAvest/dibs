@@ -10,6 +10,11 @@ uv sync --extra dev
 uv run pytest -q -m "not display"   # full suite, safe anywhere
 uv run pytest -m display            # desk/overlay/tray tests — real desktop only
 uv run dibs serve                   # run the hub (http://127.0.0.1:7474)
+uv run ruff check .                 # lint python code
+uv run ruff format .                # format python code
+uv run mypy .                       # typecheck python code
+npm run lint                        # lint dashboard JS
+npm run format                      # format dashboard files
 ```
 
 ## Architecture Overview

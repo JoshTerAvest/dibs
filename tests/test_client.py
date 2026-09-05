@@ -12,6 +12,7 @@ below runs the fake app for real with uvicorn in a background thread on a free p
 approach `tests/test_mcp.py` already uses) and points a real sync `DibsClient` at it over a
 loopback socket.
 """
+
 from __future__ import annotations
 
 import io
@@ -70,7 +71,9 @@ def build_fake_app() -> FastAPI:
         return token
 
     def _err(status: int, error: str, detail: str, **extra: Any) -> Exception:
-        return HTTPException(status_code=status, detail={"ok": False, "error": error, "detail": detail, **extra})
+        return HTTPException(
+            status_code=status, detail={"ok": False, "error": error, "detail": detail, **extra}
+        )
 
     @app.post("/v1/agents")
     async def register(request: Request) -> dict[str, Any]:
@@ -87,15 +90,28 @@ def build_fake_app() -> FastAPI:
     @app.get("/v1/state")
     def get_state(request: Request) -> dict[str, Any]:
         _authed(request)
-        return {"version": "0.1.0", "paused": False, "lease": {"holder": None, "queue": []}, "agents": []}
+        return {
+            "version": "0.1.0",
+            "paused": False,
+            "lease": {"holder": None, "queue": []},
+            "agents": [],
+        }
 
     @app.get("/v1/display")
     def get_display(request: Request) -> dict[str, Any]:
         _authed(request)
         return {
-            "screens": [{"index": 0, "x": 0, "y": 0, "width": 2560, "height": 1440, "primary": True}],
+            "screens": [
+                {"index": 0, "x": 0, "y": 0, "width": 2560, "height": 1440, "primary": True}
+            ],
             "default_screen": 0,
-            "screenshot": {"width": 1280, "height": 720, "scale": 0.5, "max_long_edge": 1568, "max_pixels": 1150000},
+            "screenshot": {
+                "width": 1280,
+                "height": 720,
+                "scale": 0.5,
+                "max_long_edge": 1568,
+                "max_pixels": 1150000,
+            },
         }
 
     @app.post("/v1/lease")
@@ -111,17 +127,35 @@ def build_fake_app() -> FastAPI:
         if state["lease_holder"] not in (None, token):
             return JSONResponse(
                 status_code=202,
-                content={"status": "queued", "position": 1, "holder": {"agent_id": "someone-else", "name": "someone-else", "expires_at": "later"}},
+                content={
+                    "status": "queued",
+                    "position": 1,
+                    "holder": {
+                        "agent_id": "someone-else",
+                        "name": "someone-else",
+                        "expires_at": "later",
+                    },
+                },
             )
         state["lease_holder"] = token
-        return {"status": "granted", "lease_id": "lease-1", "agent_id": token, "expires_at": "later"}
+        return {
+            "status": "granted",
+            "lease_id": "lease-1",
+            "agent_id": token,
+            "expires_at": "later",
+        }
 
     @app.post("/v1/lease/renew")
     async def renew_lease(request: Request) -> dict[str, Any]:
         token = _authed(request)
         if state["lease_holder"] != token:
             raise _err(409, "not_holder", "you do not hold the lease")
-        return {"status": "granted", "lease_id": "lease-1", "agent_id": token, "expires_at": "later"}
+        return {
+            "status": "granted",
+            "lease_id": "lease-1",
+            "agent_id": token,
+            "expires_at": "later",
+        }
 
     @app.delete("/v1/lease")
     def release_lease(request: Request, force: bool = Query(False)) -> Response:
@@ -144,7 +178,16 @@ def build_fake_app() -> FastAPI:
             png = _make_png(4, 3)
             import base64
 
-            return {"ok": True, "image": {"png_base64": base64.b64encode(png).decode("ascii"), "width": 4, "height": 3, "scale": 1.0, "screen": 0}}
+            return {
+                "ok": True,
+                "image": {
+                    "png_base64": base64.b64encode(png).decode("ascii"),
+                    "width": 4,
+                    "height": 3,
+                    "scale": 1.0,
+                    "screen": 0,
+                },
+            }
         if action_name == "cursor_position":
             return {"ok": True, "result": "X=10,Y=20", "data": {"x": 10, "y": 20, "screen": 0}}
         return {"ok": True, "result": "OK"}
@@ -263,7 +306,13 @@ def test_lease_denied_raises_with_reason_and_retry_after(client: DibsClient):
     client.token = AGENT_TOKEN
     client.test_app.state.internal["force_lease_result"] = (
         403,
-        {"ok": False, "error": "denied", "detail": "human_denied", "reason": "human_denied", "retry_after_s": 120},
+        {
+            "ok": False,
+            "error": "denied",
+            "detail": "human_denied",
+            "reason": "human_denied",
+            "retry_after_s": 120,
+        },
     )
 
     with pytest.raises(DibsError) as exc_info:
@@ -318,7 +367,9 @@ def test_screenshot_returns_png_dimensions_and_scale(client: DibsClient):
 
 def test_batch(client: DibsClient):
     client.token = AGENT_TOKEN
-    results = client.batch([{"action": "left_click", "coordinate": [1, 1]}, {"action": "wait", "duration": 0.1}])
+    results = client.batch(
+        [{"action": "left_click", "coordinate": [1, 1]}, {"action": "wait", "duration": 0.1}]
+    )
     assert len(results) == 2
     assert all(r["ok"] for r in results)
 

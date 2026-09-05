@@ -1,4 +1,5 @@
 """FastAPI app: REST routes, auth dependency, MCP + dashboard mounts. Owner: hub agent."""
+
 from __future__ import annotations
 
 import asyncio
@@ -38,6 +39,7 @@ def _hub_error_response(e: HubError) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
+
 
 class RegisterBody(BaseModel):
     name: str
@@ -119,10 +121,12 @@ def create_app(settings: Settings) -> FastAPI:
     # Synthetic identities for unauthenticated-but-loopback-exempt callers (the local
     # dashboard, hitting the server without a token from 127.0.0.1/::1). They are never
     # persisted in the registry; registry.touch()/get() simply no-op on unknown ids.
-    LOCAL_DASHBOARD = AgentInfo(agent_id="dashboard", name="dashboard",
-                                 purpose="local dashboard (loopback)", is_admin=False)
-    LOCAL_DASHBOARD_ADMIN = AgentInfo(agent_id="dashboard", name="dashboard",
-                                       purpose="local dashboard (loopback)", is_admin=True)
+    LOCAL_DASHBOARD = AgentInfo(
+        agent_id="dashboard", name="dashboard", purpose="local dashboard (loopback)", is_admin=False
+    )
+    LOCAL_DASHBOARD_ADMIN = AgentInfo(
+        agent_id="dashboard", name="dashboard", purpose="local dashboard (loopback)", is_admin=True
+    )
 
     # The dashboard page is the human's door. Loading `/` from loopback sets this per-process
     # cookie; the unauthenticated loopback exemption below requires it, so a local script can't
@@ -131,14 +135,21 @@ def create_app(settings: Settings) -> FastAPI:
     dash_secret = secrets.token_urlsafe(24)
 
     def _dash_ok(request: Request) -> bool:
-        return (settings.dashboard_open_on_loopback and _is_loopback(request)
-                and request.cookies.get(DASH_COOKIE) == dash_secret)
+        return (
+            settings.dashboard_open_on_loopback
+            and _is_loopback(request)
+            and request.cookies.get(DASH_COOKIE) == dash_secret
+        )
 
-    def require_auth(request: Request, authorization: str | None = Header(default=None)) -> AgentInfo:
+    def require_auth(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> AgentInfo:
         hub: Hub = get_hub(request)
         return hub.authenticate(_bearer_token(authorization))
 
-    def register_auth(request: Request, authorization: str | None = Header(default=None)) -> AgentInfo | None:
+    def register_auth(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> AgentInfo | None:
         """POST /v1/agents: open (no auth) from loopback when allow_local_open_registration,
         else the admin token is required."""
         hub: Hub = get_hub(request)
@@ -149,7 +160,9 @@ def create_app(settings: Settings) -> FastAPI:
             raise HubError(403, "admin_required", detail="admin token required")
         return agent
 
-    def dashboard_auth(request: Request, authorization: str | None = Header(default=None)) -> AgentInfo:
+    def dashboard_auth(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> AgentInfo:
         """GET /v1/state, /v1/display, /v1/audit, /v1/screenshot.png, /v1/shots/* :
         authenticated normally, OR unauthenticated from loopback when dashboard_open_on_loopback."""
         hub: Hub = get_hub(request)
@@ -158,7 +171,9 @@ def create_app(settings: Settings) -> FastAPI:
             return LOCAL_DASHBOARD
         return hub.authenticate(token)
 
-    def dashboard_admin(request: Request, authorization: str | None = Header(default=None)) -> AgentInfo:
+    def dashboard_admin(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> AgentInfo:
         """Admin pause/resume/force-release/revoke: admin token normally, OR unauthenticated
         from loopback when dashboard_open_on_loopback (so the local dashboard buttons work)."""
         hub: Hub = get_hub(request)
@@ -170,8 +185,11 @@ def create_app(settings: Settings) -> FastAPI:
             raise HubError(403, "admin_required", detail="admin token required")
         return agent
 
-    def lease_release_auth(request: Request, force: bool = Query(False),
-                            authorization: str | None = Header(default=None)) -> AgentInfo:
+    def lease_release_auth(
+        request: Request,
+        force: bool = Query(False),
+        authorization: str | None = Header(default=None),
+    ) -> AgentInfo:
         """DELETE /v1/lease: any authenticated agent may release (a no-op if they don't hold
         it). ?force=true additionally requires admin -- with the same loopback exemption as
         the other admin routes."""
@@ -188,13 +206,16 @@ def create_app(settings: Settings) -> FastAPI:
     # ---- agents ----
 
     @app.post("/v1/agents")
-    async def post_agents(request: Request, body: RegisterBody,
-                           _agent: AgentInfo | None = Depends(register_auth)):
+    async def post_agents(
+        request: Request, body: RegisterBody, _agent: AgentInfo | None = Depends(register_auth)
+    ):
         hub: Hub = get_hub(request)
         return hub.register(body.name, body.purpose)
 
     @app.delete("/v1/agents/{agent_id}")
-    async def delete_agent(agent_id: str, request: Request, _admin: AgentInfo = Depends(dashboard_admin)):
+    async def delete_agent(
+        agent_id: str, request: Request, _admin: AgentInfo = Depends(dashboard_admin)
+    ):
         hub: Hub = get_hub(request)
         hub.revoke(agent_id)
         return Response(status_code=204)
@@ -214,22 +235,25 @@ def create_app(settings: Settings) -> FastAPI:
     # ---- lease ----
 
     @app.post("/v1/lease")
-    async def post_lease(request: Request, body: LeaseAcquireBody,
-                          agent: AgentInfo = Depends(require_auth)):
+    async def post_lease(
+        request: Request, body: LeaseAcquireBody, agent: AgentInfo = Depends(require_auth)
+    ):
         hub: Hub = get_hub(request)
         result = await hub.acquire(agent, ttl_s=body.ttl_s, wait_s=body.wait_s)
         status_code = 200 if result["status"] == "granted" else 202
         return JSONResponse(status_code=status_code, content=result)
 
     @app.post("/v1/lease/renew")
-    async def post_lease_renew(request: Request, body: LeaseRenewBody,
-                                agent: AgentInfo = Depends(require_auth)):
+    async def post_lease_renew(
+        request: Request, body: LeaseRenewBody, agent: AgentInfo = Depends(require_auth)
+    ):
         hub: Hub = get_hub(request)
         return hub.renew(agent, ttl_s=body.ttl_s)
 
     @app.delete("/v1/lease")
-    async def delete_lease(request: Request, force: bool = Query(False),
-                            agent: AgentInfo = Depends(lease_release_auth)):
+    async def delete_lease(
+        request: Request, force: bool = Query(False), agent: AgentInfo = Depends(lease_release_auth)
+    ):
         hub: Hub = get_hub(request)
         hub.release(agent, force=force)
         return Response(status_code=204)
@@ -237,26 +261,33 @@ def create_app(settings: Settings) -> FastAPI:
     # ---- actions ----
 
     @app.post("/v1/actions")
-    async def post_actions(request: Request, body: ActionBody,
-                            agent: AgentInfo = Depends(require_auth)):
+    async def post_actions(
+        request: Request, body: ActionBody, agent: AgentInfo = Depends(require_auth)
+    ):
         hub: Hub = get_hub(request)
         action = _strip_dispatch_fields(body)
         result = await hub.run(agent, action, auto_lease=body.auto_lease, wait_s=body.wait_s)
         return result.to_dict()
 
     @app.post("/v1/actions/batch")
-    async def post_actions_batch(request: Request, body: BatchBody,
-                                  agent: AgentInfo = Depends(require_auth)):
+    async def post_actions_batch(
+        request: Request, body: BatchBody, agent: AgentInfo = Depends(require_auth)
+    ):
         hub: Hub = get_hub(request)
-        results = await hub.run_batch(agent, body.actions, auto_lease=body.auto_lease, wait_s=body.wait_s)
+        results = await hub.run_batch(
+            agent, body.actions, auto_lease=body.auto_lease, wait_s=body.wait_s
+        )
         return {"results": results}
 
     # ---- screenshot / audit ----
 
     @app.get("/v1/screenshot.png")
-    async def get_screenshot(request: Request, screen: int | None = Query(None),
-                              scale: float | None = Query(None),
-                              agent: AgentInfo = Depends(dashboard_auth)):
+    async def get_screenshot(
+        request: Request,
+        screen: int | None = Query(None),
+        scale: float | None = Query(None),
+        agent: AgentInfo = Depends(dashboard_auth),
+    ):
         hub: Hub = get_hub(request)
         action: dict[str, Any] = {"action": "screenshot"}
         if screen is not None:
@@ -265,8 +296,12 @@ def create_app(settings: Settings) -> FastAPI:
             # The dashboard's live view polls every second; that's not an agent action, so it
             # bypasses the hub (no lease/pause gating, no audit row, no stats) - read-only capture.
             result = await asyncio.to_thread(
-                actions.run_action, action, screen_index=settings.screen_index,
-                max_long_edge=settings.max_long_edge, max_pixels=settings.max_pixels)
+                actions.run_action,
+                action,
+                screen_index=settings.screen_index,
+                max_long_edge=settings.max_long_edge,
+                max_pixels=settings.max_pixels,
+            )
         else:
             result = await hub.run(agent, action)
         png = result.image.png if result.image is not None else b""
@@ -275,6 +310,7 @@ def create_app(settings: Settings) -> FastAPI:
                 import io as _io
 
                 from PIL import Image as _Image
+
                 img = _Image.open(_io.BytesIO(png))
                 new_w = max(1, round(img.width * scale))
                 new_h = max(1, round(img.height * scale))
@@ -287,15 +323,17 @@ def create_app(settings: Settings) -> FastAPI:
         return Response(content=png, media_type="image/png")
 
     @app.get("/v1/audit")
-    async def get_audit(request: Request, limit: int = Query(50, ge=1, le=1000),
-                         agent_id: str | None = Query(None),
-                         _agent: AgentInfo = Depends(dashboard_auth)):
+    async def get_audit(
+        request: Request,
+        limit: int = Query(50, ge=1, le=1000),
+        agent_id: str | None = Query(None),
+        _agent: AgentInfo = Depends(dashboard_auth),
+    ):
         hub: Hub = get_hub(request)
         return hub.audit(limit=limit, agent_id=agent_id)
 
     @app.get("/v1/shots/{shot_id}.png")
-    async def get_shot(shot_id: int, request: Request,
-                        _agent: AgentInfo = Depends(dashboard_auth)):
+    async def get_shot(shot_id: int, request: Request, _agent: AgentInfo = Depends(dashboard_auth)):
         hub: Hub = get_hub(request)
         path = hub.screenshot_path(shot_id)
         if path is None or not Path(path).is_file():
@@ -311,40 +349,44 @@ def create_app(settings: Settings) -> FastAPI:
         fn = hub.request_shutdown
         if fn is None:
             raise HubError(409, "not_serving", detail="no shutdown hook (start with `dibs serve`)")
-        asyncio.get_running_loop().call_later(0.3, fn)   # let this response go out first
+        asyncio.get_running_loop().call_later(0.3, fn)  # let this response go out first
         return {"ok": True, "stopping": True}
 
     @app.post("/v1/admin/pause")
-    async def post_admin_pause(request: Request, body: PauseBody,
-                                _agent: AgentInfo = Depends(dashboard_admin)):
+    async def post_admin_pause(
+        request: Request, body: PauseBody, _agent: AgentInfo = Depends(dashboard_admin)
+    ):
         hub: Hub = get_hub(request)
         hub.pause(body.reason, manual=True)
         return {"ok": True}
 
     @app.post("/v1/admin/resume")
-    async def post_admin_resume(request: Request,
-                                 _agent: AgentInfo = Depends(dashboard_admin)):
+    async def post_admin_resume(request: Request, _agent: AgentInfo = Depends(dashboard_admin)):
         hub: Hub = get_hub(request)
         hub.resume()
         return {"ok": True}
 
     @app.post("/v1/admin/mode")
-    async def post_admin_mode(request: Request, body: ModeBody,
-                               _agent: AgentInfo = Depends(dashboard_admin)):
+    async def post_admin_mode(
+        request: Request, body: ModeBody, _agent: AgentInfo = Depends(dashboard_admin)
+    ):
         hub: Hub = get_hub(request)
         hub.set_mode(body.mode)
         return {"ok": True, "mode": hub.settings.mode}
 
     @app.post("/v1/admin/consent/{request_id}")
-    async def post_admin_consent(request_id: str, request: Request, body: ConsentDecisionBody,
-                                  _agent: AgentInfo = Depends(dashboard_admin)):
+    async def post_admin_consent(
+        request_id: str,
+        request: Request,
+        body: ConsentDecisionBody,
+        _agent: AgentInfo = Depends(dashboard_admin),
+    ):
         hub: Hub = get_hub(request)
         hub.decide_consent(request_id, body.decision)
         return {"ok": True, "request_id": request_id, "decision": body.decision}
 
     @app.post("/v1/admin/release")
-    async def post_admin_release(request: Request,
-                                  _agent: AgentInfo = Depends(dashboard_admin)):
+    async def post_admin_release(request: Request, _agent: AgentInfo = Depends(dashboard_admin)):
         hub: Hub = get_hub(request)
         hub.human_release()
         return {"ok": True}
@@ -379,10 +421,14 @@ def create_app(settings: Settings) -> FastAPI:
         # streamable-HTTP transport mounted at /mcp (ClosedResourceError on every POST).
         if index_file.is_file():
             return _with_dash_cookie(request, FileResponse(str(index_file), media_type="text/html"))
-        return _with_dash_cookie(request, HTMLResponse(
-            "<html><head><title>dibs</title></head><body><h1>dibs is running</h1>"
-            '<p><a href="/v1/state">/v1/state</a> &middot; <a href="/docs">/docs</a></p>'
-            "</body></html>"))
+        return _with_dash_cookie(
+            request,
+            HTMLResponse(
+                "<html><head><title>dibs</title></head><body><h1>dibs is running</h1>"
+                '<p><a href="/v1/state">/v1/state</a> &middot; <a href="/docs">/docs</a></p>'
+                "</body></html>"
+            ),
+        )
 
     if dashboard_dir.is_dir():
         app.mount("/", StaticFiles(directory=str(dashboard_dir), html=False), name="dashboard")

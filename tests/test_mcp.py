@@ -5,6 +5,7 @@ mounts it under a FastAPI app at /mcp via `mount_mcp_app` (so both "/mcp" and "/
 covered -- see the redirect-vs-401 tests below), serves it with uvicorn in a background thread
 on a free port, and drives it with the real `mcp` python client over streamable HTTP.
 """
+
 from __future__ import annotations
 
 import io
@@ -51,7 +52,9 @@ class FakeHub:
         self.fail_with_lease_required = False
         self.fail_with_awaiting_consent = False
         self.fail_with_human_takeover = False
-        self.fail_with_denied: dict[str, Any] | None = None  # e.g. {"reason": "human_denied", "retry_after_s": 120}
+        self.fail_with_denied: dict[str, Any] | None = (
+            None  # e.g. {"reason": "human_denied", "retry_after_s": 120}
+        )
         self.acquire_result: dict[str, Any] | None = None
         self.acquire_raises: HubError | None = None
         self._agents = {
@@ -65,8 +68,14 @@ class FakeHub:
             raise HubError(401, "unauthorized", "invalid or missing bearer token")
         return agent
 
-    async def run(self, agent: AgentInfo, action: dict[str, Any], *, auto_lease: bool = False,
-                  wait_s: int | None = None) -> ActionResult:
+    async def run(
+        self,
+        agent: AgentInfo,
+        action: dict[str, Any],
+        *,
+        auto_lease: bool = False,
+        wait_s: int | None = None,
+    ) -> ActionResult:
         self.calls.append(action)
         if self.fail_with_lease_required:
             raise HubError(
@@ -114,16 +123,26 @@ class FakeHub:
             return ActionResult(image=shot)
 
         if action.get("action") == "list_windows":
-            return ActionResult(text="hwnd  title\n1     Notepad", data={"windows": [{"hwnd": 1, "title": "Notepad"}]})
+            return ActionResult(
+                text="hwnd  title\n1     Notepad",
+                data={"windows": [{"hwnd": 1, "title": "Notepad"}]},
+            )
 
         return ActionResult(text="OK")
 
-    async def acquire(self, agent: AgentInfo, ttl_s: int | None = None, wait_s: int = 0) -> dict[str, Any]:
+    async def acquire(
+        self, agent: AgentInfo, ttl_s: int | None = None, wait_s: int = 0
+    ) -> dict[str, Any]:
         if self.acquire_raises is not None:
             raise self.acquire_raises
         if self.acquire_result is not None:
             return self.acquire_result
-        return {"status": "granted", "lease_id": "lease-1", "agent_id": agent.agent_id, "expires_at": "2026-01-01T00:00:00Z"}
+        return {
+            "status": "granted",
+            "lease_id": "lease-1",
+            "agent_id": agent.agent_id,
+            "expires_at": "2026-01-01T00:00:00Z",
+        }
 
     def release(self, agent: AgentInfo, *, force: bool = False) -> None:
         return None
@@ -167,18 +186,39 @@ async def test_list_tools_screenshot_and_click(running_server):
     base_url, _fake = running_server
     url = f"{base_url}/mcp"
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
             assert "computer" in names
-            assert {"desk_status", "acquire_desk", "release_desk", "list_windows", "focus_window"} <= names
+            assert {
+                "desk_status",
+                "acquire_desk",
+                "release_desk",
+                "list_windows",
+                "focus_window",
+            } <= names
 
             computer_tool = next(t for t in tools.tools if t.name == "computer")
-            assert "screenshot pixel space" in computer_tool.description.lower() or "screenshot-space" in computer_tool.description.lower()
-            for action_name in ("screenshot", "left_click", "scroll", "type", "key", "wait", "launch"):
+            assert (
+                "screenshot pixel space" in computer_tool.description.lower()
+                or "screenshot-space" in computer_tool.description.lower()
+            )
+            for action_name in (
+                "screenshot",
+                "left_click",
+                "scroll",
+                "type",
+                "key",
+                "wait",
+                "launch",
+            ):
                 assert action_name in computer_tool.description
 
             shot_result = await session.call_tool("computer", {"action": "screenshot"})
@@ -188,7 +228,9 @@ async def test_list_tools_screenshot_and_click(running_server):
             assert image_blocks[0].mimeType == "image/png"
             assert image_blocks[0].data  # base64 payload present
 
-            click_result = await session.call_tool("computer", {"action": "left_click", "coordinate": [1, 2]})
+            click_result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
             assert not click_result.isError
             text = "".join(b.text for b in click_result.content if b.type == "text")
             assert "OK" in text
@@ -199,10 +241,16 @@ async def test_lease_required_error_names_holder(running_server):
     url = f"{base_url}/mcp"
     fake.fail_with_lease_required = True
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool("computer", {"action": "left_click", "coordinate": [1, 2]})
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
             assert result.isError
             text = "".join(b.text for b in result.content if b.type == "text")
             assert "held by" in text
@@ -214,7 +262,11 @@ async def test_desk_status_and_windows(running_server):
     base_url, _fake = running_server
     url = f"{base_url}/mcp"
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
 
@@ -231,7 +283,9 @@ async def test_desk_status_and_windows(running_server):
 
 def test_missing_auth_header_returns_401(running_server):
     base_url, _fake = running_server
-    response = httpx.post(f"{base_url}/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+    response = httpx.post(
+        f"{base_url}/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    )
     assert response.status_code == 401
     body = response.json()
     assert body["ok"] is False
@@ -266,10 +320,16 @@ async def test_consent_pending_error_mentions_consent(running_server):
     url = f"{base_url}/mcp"
     fake.fail_with_awaiting_consent = True
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool("computer", {"action": "left_click", "coordinate": [1, 2]})
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
             assert result.isError
             text = "".join(b.text for b in result.content if b.type == "text")
             assert "consent" in text
@@ -281,10 +341,16 @@ async def test_denied_error_mentions_denied(running_server):
     url = f"{base_url}/mcp"
     fake.fail_with_denied = {"reason": "human_denied", "retry_after_s": 120}
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool("computer", {"action": "left_click", "coordinate": [1, 2]})
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
             assert result.isError
             text = "".join(b.text for b in result.content if b.type == "text")
             assert "denied" in text
@@ -296,10 +362,16 @@ async def test_human_takeover_error_mentions_taken_by_the_human(running_server):
     url = f"{base_url}/mcp"
     fake.fail_with_human_takeover = True
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool("computer", {"action": "left_click", "coordinate": [1, 2]})
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
             assert result.isError
             text = "".join(b.text for b in result.content if b.type == "text")
             assert "taken by the human" in text
@@ -315,7 +387,11 @@ async def test_acquire_desk_returns_awaiting_consent_json_verbatim(running_serve
         "human": {"active": True},
     }
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool("acquire_desk", {"wait_s": 0})
@@ -328,10 +404,15 @@ async def test_acquire_desk_returns_awaiting_consent_json_verbatim(running_serve
 async def test_acquire_desk_denied_raises_tool_error(running_server):
     base_url, fake = running_server
     url = f"{base_url}/mcp"
-    fake.acquire_raises = HubError(403, "denied", "human_denied",
-                                    payload={"reason": "human_denied", "retry_after_s": 120})
+    fake.acquire_raises = HubError(
+        403, "denied", "human_denied", payload={"reason": "human_denied", "retry_after_s": 120}
+    )
 
-    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (read, write, _get_id):
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool("acquire_desk", {"wait_s": 0})

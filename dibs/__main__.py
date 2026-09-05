@@ -4,6 +4,7 @@
 running server (default `http://127.0.0.1:7474`), authenticating with the admin token read
 from `<data_dir>/secrets.json` unless `--token` is given.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,7 @@ DEFAULT_URL = "http://127.0.0.1:7474"
 # ---------------------------------------------------------------------------
 # helpers shared by the REST client subcommands
 # ---------------------------------------------------------------------------
+
 
 def _resolve_token(args: argparse.Namespace) -> str | None:
     if getattr(args, "token", None):
@@ -64,7 +66,9 @@ def _client(args: argparse.Namespace) -> httpx.Client:
 
 def _add_client_args(p: argparse.ArgumentParser, *, needs_config: bool = True) -> None:
     p.add_argument("--url", default=DEFAULT_URL, help=f"dibs server URL (default {DEFAULT_URL})")
-    p.add_argument("--token", default=None, help="bearer token (default: admin token from secrets.json)")
+    p.add_argument(
+        "--token", default=None, help="bearer token (default: admin token from secrets.json)"
+    )
     if needs_config:
         p.add_argument("--config", default=None, help="config.yaml path (to locate data_dir)")
 
@@ -72,6 +76,7 @@ def _add_client_args(p: argparse.ArgumentParser, *, needs_config: bool = True) -
 # ---------------------------------------------------------------------------
 # subcommands
 # ---------------------------------------------------------------------------
+
 
 def cmd_serve(args: argparse.Namespace) -> None:
     import uvicorn
@@ -96,10 +101,12 @@ def cmd_serve(args: argparse.Namespace) -> None:
     print(f"  (also in {Path(settings.data_dir) / 'secrets.json'})")
 
     app = create_app(settings)
-    server = uvicorn.Server(uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=settings.host, port=settings.port, log_level="info")
+    )
     hub = getattr(app.state, "hub", None)
     if hub is not None:
-        hub.request_shutdown = lambda: setattr(server, "should_exit", True)   # tray "Quit dibs"
+        hub.request_shutdown = lambda: setattr(server, "should_exit", True)  # tray "Quit dibs"
     server.run()
 
 
@@ -130,8 +137,10 @@ def cmd_agents(args: argparse.Namespace) -> None:
         if a.get("revoked"):
             flags.append("revoked")
         flag_str = f" [{', '.join(flags)}]" if flags else ""
-        print(f"{a['agent_id']}\t{a['name']!r}\tactions={a['action_count']}\t"
-              f"last_seen={a['last_seen']}{flag_str}")
+        print(
+            f"{a['agent_id']}\t{a['name']!r}\tactions={a['action_count']}\t"
+            f"last_seen={a['last_seen']}{flag_str}"
+        )
     if not state.get("agents"):
         print("(no agents registered)")
 
@@ -145,21 +154,35 @@ def cmd_status(args: argparse.Namespace) -> None:
     print(f"version:      {state.get('version')}")
     print(f"uptime_s:     {state.get('uptime_s')}")
     print(f"mode:         {state.get('mode')}")
-    print(f"paused:       {state.get('paused')}"
-          + (f" (reason={state.get('pause_reason')})" if state.get("paused") else ""))
-    print(f"has dibs:     {holder['name'] + ' (' + holder['agent_id'] + ')' if holder else '(none)'}")
+    print(
+        f"paused:       {state.get('paused')}"
+        + (f" (reason={state.get('pause_reason')})" if state.get("paused") else "")
+    )
+    print(
+        f"has dibs:     {holder['name'] + ' (' + holder['agent_id'] + ')' if holder else '(none)'}"
+    )
     print(f"queue:        {len(lease.get('queue', []))}")
     human = state.get("human", {})
-    print(f"human:        {'active' if human.get('active') else 'idle'}"
-          + (f" ({human['last_input_ago_s']:.0f}s ago)" if human.get("last_input_ago_s") is not None else ""))
+    print(
+        f"human:        {'active' if human.get('active') else 'idle'}"
+        + (
+            f" ({human['last_input_ago_s']:.0f}s ago)"
+            if human.get("last_input_ago_s") is not None
+            else ""
+        )
+    )
     pending = state.get("consent", {}).get("pending")
     if pending:
-        print(f"consent:      pending from {pending['name']!r} ({pending['request_id']})"
-              f" -- purpose: {pending['purpose']!r}")
+        print(
+            f"consent:      pending from {pending['name']!r} ({pending['request_id']})"
+            f" -- purpose: {pending['purpose']!r}"
+        )
     print(f"agents:       {len(state.get('agents', []))}")
     stats = state.get("stats", {})
-    print(f"actions:      total={stats.get('actions_total')} "
-          f"failed={stats.get('actions_failed')} last_5m={stats.get('actions_last_5m')}")
+    print(
+        f"actions:      total={stats.get('actions_total')} "
+        f"failed={stats.get('actions_failed')} last_5m={stats.get('actions_last_5m')}"
+    )
 
 
 def cmd_pause(args: argparse.Namespace) -> None:
@@ -231,9 +254,16 @@ def _wait_port(url: str, *, up: bool, timeout_s: float) -> bool:
 
 def _task_state() -> str | None:
     """State of the `dibs` Scheduled Task (Windows), or None when it isn't installed."""
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-Command",
-                        "(Get-ScheduledTask -TaskName dibs -ErrorAction Stop).State"],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "(Get-ScheduledTask -TaskName dibs -ErrorAction Stop).State",
+        ],
+        capture_output=True,
+        text=True,
+    )
     return r.stdout.strip() or None if r.returncode == 0 else None
 
 
@@ -254,18 +284,35 @@ def cmd_restart(args: argparse.Namespace) -> None:
         while time.monotonic() < deadline and _task_state() == "Running":
             time.sleep(0.5)
         if _task_state() == "Running":
-            subprocess.run(["powershell.exe", "-NoProfile", "-Command", "Stop-ScheduledTask -TaskName dibs"],
-                           capture_output=True, text=True)
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", "Stop-ScheduledTask -TaskName dibs"],
+                capture_output=True,
+                text=True,
+            )
             time.sleep(1)
-        r = subprocess.run(["powershell.exe", "-NoProfile", "-Command",
-                            "Start-ScheduledTask -TaskName dibs -ErrorAction Stop"],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-Command",
+                "Start-ScheduledTask -TaskName dibs -ErrorAction Stop",
+            ],
+            capture_output=True,
+            text=True,
+        )
         via_task = r.returncode == 0
     if not via_task:
-        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-        subprocess.Popen([sys.executable, "-m", "dibs", "serve"], creationflags=flags, close_fds=True)
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+        subprocess.Popen(
+            [sys.executable, "-m", "dibs", "serve"], creationflags=flags, close_fds=True
+        )
     if _wait_port(args.url, up=True, timeout_s=25):
-        print(f"dibs: running at {args.url} via " + ("the scheduled task" if via_task else "a detached process"))
+        print(
+            f"dibs: running at {args.url} via "
+            + ("the scheduled task" if via_task else "a detached process")
+        )
     else:
         sys.exit("dibs: did not come back up; check data/dibs.log")
 
@@ -284,6 +331,7 @@ def cmd_shot(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # argument parser
 # ---------------------------------------------------------------------------
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dibs", description="Windows computer-use hub.")
@@ -344,7 +392,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_client_args(p_stop)
     p_stop.set_defaults(func=cmd_stop)
 
-    p_restart = sub.add_parser("restart", help="stop, then start again (scheduled task if installed)")
+    p_restart = sub.add_parser(
+        "restart", help="stop, then start again (scheduled task if installed)"
+    )
     _add_client_args(p_restart)
     p_restart.set_defaults(func=cmd_restart)
 

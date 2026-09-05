@@ -267,6 +267,13 @@ settable via env var `DIBS_<KEY>` (`__` for nesting, e.g.
 ```powershell
 uv run pytest                 # everything that doesn't need a real display
 uv run pytest -m display      # exercises the real screen/mouse/keyboard/overlay on this box
+uv run ruff check .           # lint python code
+uv run ruff format .          # format python code
+uv run mypy .                 # typecheck python code
+
+npm install                   # install JS dependencies
+npm run lint                  # lint dashboard JS
+npm run format                # format dashboard files
 ```
 
 ## Contributing

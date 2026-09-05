@@ -5,6 +5,7 @@ presence + takeover, audit. server.py (REST) and mcp_server.py (MCP) are thin la
 class, so keep it transport-free. See docs/SPEC.md and docs/SPEC-v0.2-human.md (mode / consent /
 takeover / overlay hookups supersede the v0.1 "human override" section).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,8 +39,11 @@ _TYPING_ACTIONS = frozenset({"type", "key", "hold_key"})
 
 # Click-shaped actions -> the button name the overlay's flash_click wants.
 _CLICK_FLASH_BUTTON = {
-    "left_click": "left", "double_click": "left", "triple_click": "left",
-    "right_click": "right", "middle_click": "middle",
+    "left_click": "left",
+    "double_click": "left",
+    "triple_click": "left",
+    "right_click": "right",
+    "middle_click": "middle",
 }
 
 
@@ -57,8 +61,17 @@ def _estimate_action_duration(action: dict[str, Any]) -> float:
     `presence.agent_input_until()` can be given a deadline that covers it (SPEC-v0.2 §1)."""
     name = action.get("action")
     motion_s = 0.0
-    
-    if name in ("mouse_move", "left_click", "right_click", "middle_click", "double_click", "triple_click", "left_click_drag", "scroll"):
+
+    if name in (
+        "mouse_move",
+        "left_click",
+        "right_click",
+        "middle_click",
+        "double_click",
+        "triple_click",
+        "left_click_drag",
+        "scroll",
+    ):
         to_coord = action.get("coordinate")
         if to_coord and isinstance(to_coord, list) and len(to_coord) == 2:
             from_coord = action.get("start_coordinate")
@@ -80,7 +93,7 @@ def _estimate_action_duration(action: dict[str, Any]) -> float:
         except (TypeError, ValueError):
             return 0.5 + motion_s
     if name == "left_click_drag":
-        return 0.4 + motion_s # actions.py drags over ~0.3s
+        return 0.4 + motion_s  # actions.py drags over ~0.3s
     if name == "type":
         text = action.get("text") or ""
         return min(10.0, 0.02 * len(text) + 0.2) + motion_s
@@ -104,9 +117,16 @@ class AgentInfo:
 class HubError(Exception):
     """status = HTTP status to use; code = machine string; payload = extra json fields."""
 
-    def __init__(self, status: int, code: str, detail: str = "", payload: dict[str, Any] | None = None):
+    def __init__(
+        self, status: int, code: str, detail: str = "", payload: dict[str, Any] | None = None
+    ):
         super().__init__(detail or code)
-        self.status, self.code, self.detail, self.payload = status, code, detail or code, payload or {}
+        self.status, self.code, self.detail, self.payload = (
+            status,
+            code,
+            detail or code,
+            payload or {},
+        )
 
 
 @dataclass
@@ -119,7 +139,7 @@ class ConsentRequest:
     name: str
     purpose: str
     requested_at: float  # time.time()
-    expires_at: float    # time.time()
+    expires_at: float  # time.time()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,12 +211,14 @@ class Hub:
         self._audit = AuditLog(self.data_dir)
         self._lease = LeaseManager(settings.lease_default_ttl_s, settings.lease_max_ttl_s)
         self._presence = presence.Presence(
-            idle_after_s=settings.presence.idle_after_s, on_human_input=self._on_human_input,
+            idle_after_s=settings.presence.idle_after_s,
+            on_human_input=self._on_human_input,
         )
         self.overlay = overlay.create(settings)
-        self.request_shutdown: Callable[[], None] | None = None   # set by `dibs serve`
-        self.tray = tray.create(_TrayActions(self), f"http://127.0.0.1:{settings.port}",
-                                enabled=settings.tray.enabled)
+        self.request_shutdown: Callable[[], None] | None = None  # set by `dibs serve`
+        self.tray = tray.create(
+            _TrayActions(self), f"http://127.0.0.1:{settings.port}", enabled=settings.tray.enabled
+        )
 
         self._paused = False
         self._pause_reason: str | None = None
@@ -207,8 +229,8 @@ class Hub:
 
         # consent / mode state (SPEC-v0.2 §2)
         self._pending_consent: ConsentRequest | None = None
-        self._consent_windows: dict[str, float] = {}   # agent_id -> consent_until (time.time())
-        self._deny_cooldowns: dict[str, float] = {}     # agent_id -> cooldown_until (time.time())
+        self._consent_windows: dict[str, float] = {}  # agent_id -> consent_until (time.time())
+        self._deny_cooldowns: dict[str, float] = {}  # agent_id -> cooldown_until (time.time())
         self._consent_recent: list[dict[str, Any]] = []
         self._consent_recent_max = 20
 
@@ -224,7 +246,9 @@ class Hub:
 
     async def start(self) -> None:
         desk.set_dpi_aware()
-        desk.configure_motion(enabled=self.settings.motion.human_like, speed=self.settings.motion.speed)
+        desk.configure_motion(
+            enabled=self.settings.motion.human_like, speed=self.settings.motion.speed
+        )
         self._audit.open(keep_screenshots=self.settings.keep_screenshots)
         self._start_time = time.monotonic()
         self._loop = asyncio.get_running_loop()
@@ -322,6 +346,7 @@ class Hub:
             def wrap(callback):
                 def _on_activate() -> None:
                     loop.call_soon_threadsafe(callback)
+
                 return _on_activate
 
             combos = {
@@ -392,12 +417,19 @@ class Hub:
         agent = self.registry.by_token(token)
         if agent is None:
             raise HubError(401, "unauthorized", detail="invalid or revoked token")
-        return AgentInfo(agent_id=agent.agent_id, name=agent.name, purpose=agent.purpose, is_admin=False)
+        return AgentInfo(
+            agent_id=agent.agent_id, name=agent.name, purpose=agent.purpose, is_admin=False
+        )
 
     def register(self, name: str, purpose: str) -> dict[str, Any]:
         agent = self.registry.register(name, purpose)
-        return {"agent_id": agent.agent_id, "name": agent.name, "purpose": agent.purpose,
-                "token": agent.token, "created_at": agent.created_at}
+        return {
+            "agent_id": agent.agent_id,
+            "name": agent.name,
+            "purpose": agent.purpose,
+            "token": agent.token,
+            "created_at": agent.created_at,
+        }
 
     def revoke(self, agent_id: str) -> None:
         self.registry.revoke(agent_id)
@@ -411,7 +443,9 @@ class Hub:
 
     # ---- lease / consent (SPEC-v0.2 §2.1) ----
 
-    async def acquire(self, agent: AgentInfo, ttl_s: int | None = None, wait_s: int = 0) -> dict[str, Any]:
+    async def acquire(
+        self, agent: AgentInfo, ttl_s: int | None = None, wait_s: int = 0
+    ) -> dict[str, Any]:
         wait_s = max(0, wait_s)
         deadline = time.monotonic() + wait_s
         while True:
@@ -421,40 +455,69 @@ class Hub:
                 return result
             if time.monotonic() >= deadline:
                 return self._pending_snapshot(agent)
-            await asyncio.sleep(min(_CONSENT_POLL_INTERVAL_S, max(0.01, deadline - time.monotonic())))
+            await asyncio.sleep(
+                min(_CONSENT_POLL_INTERVAL_S, max(0.01, deadline - time.monotonic()))
+            )
 
     async def _acquire_step(self, agent: AgentInfo, ttl_s: int | None) -> dict[str, Any] | None:
         resolved = self._maybe_auto_allow_on_idle() or self._resolve_pending_consent_if_due()
         if resolved is not None:
             decision, req = resolved
             if req.agent_id == agent.agent_id and decision == "timeout":
-                raise HubError(403, "denied", payload={
-                    "status": "denied", "reason": "timeout", "retry_after_s": 60,
-                })
+                raise HubError(
+                    403,
+                    "denied",
+                    payload={
+                        "status": "denied",
+                        "reason": "timeout",
+                        "retry_after_s": 60,
+                    },
+                )
             if req.agent_id == agent.agent_id and decision == "deny":
-                raise HubError(403, "denied", payload={
-                    "status": "denied", "reason": "human_denied",
-                    "retry_after_s": int(self.settings.presence.deny_cooldown_s),
-                })
+                raise HubError(
+                    403,
+                    "denied",
+                    payload={
+                        "status": "denied",
+                        "reason": "human_denied",
+                        "retry_after_s": int(self.settings.presence.deny_cooldown_s),
+                    },
+                )
 
         cooldown_until = self._deny_cooldowns.get(agent.agent_id)
         if cooldown_until is not None:
             if time.time() < cooldown_until:
-                raise HubError(403, "denied", payload={
-                    "status": "denied", "reason": "human_denied",
-                    "retry_after_s": int(math.ceil(cooldown_until - time.time())),
-                })
+                raise HubError(
+                    403,
+                    "denied",
+                    payload={
+                        "status": "denied",
+                        "reason": "human_denied",
+                        "retry_after_s": int(math.ceil(cooldown_until - time.time())),
+                    },
+                )
             self._deny_cooldowns.pop(agent.agent_id, None)
 
         if self._paused and self._pause_manual:
-            raise HubError(403, "denied", payload={
-                "status": "denied", "reason": "paused",
-                "retry_after_s": _DEFAULT_RETRY_AFTER_S,
-            })
+            raise HubError(
+                403,
+                "denied",
+                payload={
+                    "status": "denied",
+                    "reason": "paused",
+                    "retry_after_s": _DEFAULT_RETRY_AFTER_S,
+                },
+            )
         if self.settings.mode == "locked":
-            raise HubError(403, "denied", payload={
-                "status": "denied", "reason": "locked", "retry_after_s": _DEFAULT_RETRY_AFTER_S,
-            })
+            raise HubError(
+                403,
+                "denied",
+                payload={
+                    "status": "denied",
+                    "reason": "locked",
+                    "retry_after_s": _DEFAULT_RETRY_AFTER_S,
+                },
+            )
 
         holder_id = self._lease.holder_agent_id()
         if holder_id is not None and holder_id != agent.agent_id:
@@ -482,12 +545,19 @@ class Hub:
         holder_id = self._lease.holder_agent_id()
         if holder_id is not None and holder_id != agent.agent_id:
             snap = self._lease.snapshot()
-            return {"status": "queued", "position": self._lease.queue_position(agent.agent_id) or 0,
-                    "holder": snap["holder"]}
+            return {
+                "status": "queued",
+                "position": self._lease.queue_position(agent.agent_id) or 0,
+                "holder": snap["holder"],
+            }
         p = self._pending_consent
         if p is not None:
-            return {"status": "awaiting_consent", "request_id": p.request_id,
-                    "expires_at": _iso(p.expires_at), "human": self._presence.snapshot()}
+            return {
+                "status": "awaiting_consent",
+                "request_id": p.request_id,
+                "expires_at": _iso(p.expires_at),
+                "human": self._presence.snapshot(),
+            }
         # Resolved in the instant between the last _acquire_step and this snapshot -- tell the
         # caller to just ask again right away.
         return {"status": "queued", "position": 0, "holder": None}
@@ -498,13 +568,22 @@ class Hub:
         now = time.time()
         timeout_s = self.settings.presence.consent_timeout_s
         req = ConsentRequest(
-            request_id=secrets.token_urlsafe(8), agent_id=agent.agent_id, name=agent.name,
-            purpose=agent.purpose, requested_at=now, expires_at=now + timeout_s,
+            request_id=secrets.token_urlsafe(8),
+            agent_id=agent.agent_id,
+            name=agent.name,
+            purpose=agent.purpose,
+            requested_at=now,
+            expires_at=now + timeout_s,
         )
         self._pending_consent = req
         try:
-            self.overlay.prompt_consent(req.request_id, agent.name, agent.purpose, timeout_s,
-                                         self._on_overlay_consent_decision)
+            self.overlay.prompt_consent(
+                req.request_id,
+                agent.name,
+                agent.purpose,
+                timeout_s,
+                self._on_overlay_consent_decision,
+            )
         except Exception:
             logger.exception("overlay.prompt_consent failed")
 
@@ -528,10 +607,15 @@ class Hub:
             self._consent_windows[p.agent_id] = now + self.settings.presence.consent_grant_s
         elif decision == "deny":
             self._deny_cooldowns[p.agent_id] = now + self.settings.presence.deny_cooldown_s
-        self._consent_recent.append({
-            "request_id": p.request_id, "agent_id": p.agent_id, "decision": decision, "at": _now_iso(),
-        })
-        del self._consent_recent[:-self._consent_recent_max]
+        self._consent_recent.append(
+            {
+                "request_id": p.request_id,
+                "agent_id": p.agent_id,
+                "decision": decision,
+                "at": _now_iso(),
+            }
+        )
+        del self._consent_recent[: -self._consent_recent_max]
         try:
             self.overlay.dismiss_consent(p.request_id)
         except Exception:
@@ -558,7 +642,9 @@ class Hub:
         if decision not in ("allow", "deny"):
             raise HubError(400, "invalid_decision", detail="decision must be 'allow' or 'deny'")
         if not self._apply_consent_decision(request_id, decision):
-            raise HubError(404, "no_pending_request", detail=f"no pending consent request {request_id!r}")
+            raise HubError(
+                404, "no_pending_request", detail=f"no pending consent request {request_id!r}"
+            )
 
     # ---- lease: renew / release ----
 
@@ -646,8 +732,14 @@ class Hub:
             self._update_overlay_holder()
         if revoked or force_pause:
             self.pause("human_took_the_mouse", manual=False)
-            self._audit.record(agent_id=holder_id or "human", action="human_takeover",
-                                input_data={"holder": holder_id}, ok=True, error=None, duration_ms=0)
+            self._audit.record(
+                agent_id=holder_id or "human",
+                action="human_takeover",
+                input_data={"holder": holder_id},
+                ok=True,
+                error=None,
+                duration_ms=0,
+            )
             try:
                 self.overlay.show_human()
             except Exception:
@@ -655,23 +747,36 @@ class Hub:
 
     # ---- actions ----
 
-    async def run(self, agent: AgentInfo, action: dict[str, Any], *, auto_lease: bool = False,
-                  wait_s: int | None = None) -> ActionResult:
+    async def run(
+        self,
+        agent: AgentInfo,
+        action: dict[str, Any],
+        *,
+        auto_lease: bool = False,
+        wait_s: int | None = None,
+    ) -> ActionResult:
         action_name = action.get("action")
         start = time.monotonic()
 
         def record(ok: bool, error: str | None, result: ActionResult | None = None) -> None:
             duration_ms = int((time.monotonic() - start) * 1000)
             png = result.image.png if (result is not None and result.image is not None) else None
-            self._audit.record(agent_id=agent.agent_id, action=str(action_name), input_data=action,
-                               ok=ok, error=error, duration_ms=duration_ms, png=png)
+            self._audit.record(
+                agent_id=agent.agent_id,
+                action=str(action_name),
+                input_data=action,
+                ok=ok,
+                error=error,
+                duration_ms=duration_ms,
+                png=png,
+            )
             self.registry.touch(agent.agent_id)
 
         try:
             if action_name not in actions.ALL_ACTIONS:
                 raise HubError(400, "unknown_action", detail=f"unknown action: {action_name!r}")
             read_only = actions.is_read_only(action_name)
-            gated = action_name not in actions.FREE_ACTIONS   # everything but `wait` needs dibs
+            gated = action_name not in actions.FREE_ACTIONS  # everything but `wait` needs dibs
 
             if gated:
                 if action_name == "launch" and not self.settings.allow_launch:
@@ -683,25 +788,37 @@ class Hub:
                         wait = self.settings.auto_lease_wait_s if wait_s is None else wait_s
                         lease_result = await self.acquire(agent, wait_s=wait)
                         if lease_result["status"] == "awaiting_consent":
-                            raise HubError(409, "lease_required", detail="awaiting human consent", payload={
-                                "status": "awaiting_consent",
-                                "request_id": lease_result["request_id"],
-                                "expires_at": lease_result["expires_at"],
-                                "human": lease_result.get("human"),
-                            })
+                            raise HubError(
+                                409,
+                                "lease_required",
+                                detail="awaiting human consent",
+                                payload={
+                                    "status": "awaiting_consent",
+                                    "request_id": lease_result["request_id"],
+                                    "expires_at": lease_result["expires_at"],
+                                    "human": lease_result.get("human"),
+                                },
+                            )
                         if lease_result["status"] != "granted":
-                            raise HubError(409, "lease_required", payload={
-                                "holder": lease_result.get("holder"),
-                                "queue_position": lease_result.get("position"),
-                            })
+                            raise HubError(
+                                409,
+                                "lease_required",
+                                payload={
+                                    "holder": lease_result.get("holder"),
+                                    "queue_position": lease_result.get("position"),
+                                },
+                            )
                     else:
                         detail = "lease_required"
                         payload: dict[str, Any] = {
                             "holder": self._lease.snapshot()["holder"],
                             "queue_position": self._lease.queue_position(agent.agent_id),
                         }
-                        if (self._paused and self._pause_reason == "human_took_the_mouse"
-                                and not self._pause_manual):
+                        if (
+                            self._paused
+                            and self._pause_reason == "human_took_the_mouse"
+                            and not self._pause_manual
+                        ):
                             detail = "desk taken by human"
                             payload["human_active"] = self._presence.human_active()
                         raise HubError(409, "lease_required", detail=detail, payload=payload)
@@ -710,8 +827,12 @@ class Hub:
                 # the physical desk may still be paused (failsafe, a manual pause, or a
                 # takeover pause that hasn't auto-resumed yet).
                 if self._paused:
-                    raise HubError(423, "paused", detail=self._pause_reason or "paused",
-                                    payload={"reason": self._pause_reason})
+                    raise HubError(
+                        423,
+                        "paused",
+                        detail=self._pause_reason or "paused",
+                        payload={"reason": self._pause_reason},
+                    )
 
             show_typing = not read_only and action_name in _TYPING_ACTIONS
             if not read_only:
@@ -726,7 +847,8 @@ class Hub:
             try:
                 async with self._action_lock:
                     result = await asyncio.to_thread(
-                        actions.run_action, action,
+                        actions.run_action,
+                        action,
                         screen_index=self.settings.screen_index,
                         max_long_edge=self.settings.max_long_edge,
                         max_pixels=self.settings.max_pixels,
@@ -736,7 +858,9 @@ class Hub:
                 raise HubError(400, e.code, detail=e.detail) from e
             except desk.FailsafeTriggered as e:
                 self.pause("failsafe", manual=False)
-                raise HubError(423, "paused", detail="failsafe", payload={"reason": "failsafe"}) from e
+                raise HubError(
+                    423, "paused", detail="failsafe", payload={"reason": "failsafe"}
+                ) from e
             except desk.DeskError as e:
                 raise HubError(500, "desk_error", detail=str(e)) from e
             finally:
@@ -763,14 +887,25 @@ class Hub:
             record(False, e.code)
             raise
 
-    async def run_batch(self, agent: AgentInfo, actions: list[dict[str, Any]], *, auto_lease: bool = False,
-                        wait_s: int | None = None) -> list[dict[str, Any]]:
+    async def run_batch(
+        self,
+        agent: AgentInfo,
+        actions: list[dict[str, Any]],
+        *,
+        auto_lease: bool = False,
+        wait_s: int | None = None,
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         failed = False
         for act in actions:
             if failed:
-                results.append({"ok": False, "error": "not_executed",
-                                 "detail": "an earlier action in this batch failed"})
+                results.append(
+                    {
+                        "ok": False,
+                        "error": "not_executed",
+                        "detail": "an earlier action in this batch failed",
+                    }
+                )
                 continue
             try:
                 result = await self.run(agent, act, auto_lease=auto_lease, wait_s=wait_s)
@@ -789,12 +924,18 @@ class Hub:
         holder_id = lease_snap["holder"]["agent_id"] if lease_snap["holder"] else None
         agents_list = []
         for a in self.registry.list():
-            agents_list.append({
-                "agent_id": a.agent_id, "name": a.name, "purpose": a.purpose,
-                "created_at": a.created_at, "last_seen": a.last_seen,
-                "action_count": a.action_count, "revoked": a.revoked,
-                "holding": a.agent_id == holder_id,
-            })
+            agents_list.append(
+                {
+                    "agent_id": a.agent_id,
+                    "name": a.name,
+                    "purpose": a.purpose,
+                    "created_at": a.created_at,
+                    "last_seen": a.last_seen,
+                    "action_count": a.action_count,
+                    "revoked": a.revoked,
+                    "holding": a.agent_id == holder_id,
+                }
+            )
         uptime = time.monotonic() - self._start_time if self._start_time is not None else 0.0
         now = time.time()
         return {
@@ -813,7 +954,8 @@ class Hub:
                 "pending": self._pending_consent.to_dict() if self._pending_consent else None,
                 "windows": [
                     {"agent_id": aid, "consent_until": _iso(until)}
-                    for aid, until in self._consent_windows.items() if until > now
+                    for aid, until in self._consent_windows.items()
+                    if until > now
                 ],
                 "recent": list(self._consent_recent),
             },
@@ -831,14 +973,20 @@ class Hub:
         default_index = self.settings.screen_index
         if default_index is None:
             default_index = next((s.index for s in screens if s.primary), 0)
-        default_screen = next((s for s in screens if s.index == default_index),
-                               screens[0] if screens else None)
+        default_screen = next(
+            (s for s in screens if s.index == default_index), screens[0] if screens else None
+        )
         screenshot_info: dict[str, Any] = {
-            "width": 0, "height": 0, "scale": 1.0,
-            "max_long_edge": self.settings.max_long_edge, "max_pixels": self.settings.max_pixels,
+            "width": 0,
+            "height": 0,
+            "scale": 1.0,
+            "max_long_edge": self.settings.max_long_edge,
+            "max_pixels": self.settings.max_pixels,
         }
         if default_screen is not None:
-            scale = actions.scale_for(default_screen, self.settings.max_long_edge, self.settings.max_pixels)
+            scale = actions.scale_for(
+                default_screen, self.settings.max_long_edge, self.settings.max_pixels
+            )
             screenshot_info["width"] = round(default_screen.width * scale)
             screenshot_info["height"] = round(default_screen.height * scale)
             screenshot_info["scale"] = scale

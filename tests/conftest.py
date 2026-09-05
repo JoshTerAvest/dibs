@@ -7,6 +7,7 @@ the actual Windows desktop. These fixtures monkeypatch the boundary the hub talk
 keyboard. `pynput.keyboard.GlobalHotKeys` is also replaced with a no-op so `Hub.start()`
 doesn't register a real global hotkey during tests.
 """
+
 from __future__ import annotations
 
 import io
@@ -42,8 +43,9 @@ class FakeCursor:
         self.pos = pos
 
 
-def _fake_run_action(action, *, screen_index=None, max_long_edge=1568, max_pixels=1_150_000,
-                      allow_launch=False):
+def _fake_run_action(
+    action, *, screen_index=None, max_long_edge=1568, max_pixels=1_150_000, allow_launch=False
+):
     name = action.get("action")
     if name not in actions_mod.ALL_ACTIONS:
         raise actions_mod.ActionError("unknown_action", f"unknown action: {name!r}")
@@ -52,12 +54,14 @@ def _fake_run_action(action, *, screen_index=None, max_long_edge=1568, max_pixel
         shot = desk_mod.Shot(png=TINY_PNG, width=4, height=3, scale=1.0, screen=screen)
         return actions_mod.ActionResult(image=shot)
     if name == "zoom":
-        shot = desk_mod.Shot(png=TINY_PNG, width=4, height=3, scale=1.0, screen=screen,
-                              region=(0, 0, 4, 3))
+        shot = desk_mod.Shot(
+            png=TINY_PNG, width=4, height=3, scale=1.0, screen=screen, region=(0, 0, 4, 3)
+        )
         return actions_mod.ActionResult(image=shot)
     if name == "cursor_position":
         return actions_mod.ActionResult(
-            text="X=1,Y=1", data={"x": 1, "y": 1, "screen": 0, "absolute": [1, 1]})
+            text="X=1,Y=1", data={"x": 1, "y": 1, "screen": 0, "absolute": [1, 1]}
+        )
     if name == "list_windows":
         return actions_mod.ActionResult(text="", data={"windows": []})
     if name == "get_clipboard":
@@ -99,6 +103,7 @@ def no_hotkey(monkeypatch):
             pass
 
     import pynput.keyboard as kb
+
     monkeypatch.setattr(kb, "GlobalHotKeys", _NoopGlobalHotKeys)
 
 
@@ -126,7 +131,13 @@ def settings_factory(tmp_path, patch_desk, no_hotkey):
         # Lease/server mechanics tests aren't about consent; since 9/4 `ask` mode never grants
         # without a human decision, so default to hands_off and let consent tests pass mode='ask'.
         overrides.setdefault("mode", "hands_off")
-        return Settings(data_dir=data_dir, presence=presence_cfg, overlay=overlay_cfg, tray=tray_cfg, **overrides)
+        return Settings(
+            data_dir=data_dir,
+            presence=presence_cfg,
+            overlay=overlay_cfg,
+            tray=tray_cfg,
+            **overrides,
+        )
 
     return make
 
@@ -147,7 +158,7 @@ def make_client(settings_factory):
         settings = settings_factory(**settings_overrides)
         app = create_app(settings)
         client = TestClient(app, client=(client_host, 51000))
-        client.get("/")   # like a browser: loads the page, receives the dashboard cookie
+        client.get("/")  # like a browser: loads the page, receives the dashboard cookie
         return client
 
     return make

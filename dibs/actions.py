@@ -3,6 +3,7 @@
 Coordinates in requests are in SCREENSHOT space of the target screen; this module maps them to
 absolute pixels using the deterministic scale for that screen and calls desk.*.
 """
+
 from __future__ import annotations
 
 import base64
@@ -25,11 +26,26 @@ READ_ONLY_ACTIONS: frozenset[str] = frozenset(
 # The only actions that need neither dibs nor consent and work while paused.
 FREE_ACTIONS: frozenset[str] = frozenset({"wait"})
 
-ALL_ACTIONS: frozenset[str] = READ_ONLY_ACTIONS | frozenset({
-    "left_click", "right_click", "middle_click", "double_click", "triple_click",
-    "left_click_drag", "mouse_move", "left_mouse_down", "left_mouse_up", "scroll",
-    "type", "key", "hold_key", "focus_window", "set_clipboard", "launch",
-})
+ALL_ACTIONS: frozenset[str] = READ_ONLY_ACTIONS | frozenset(
+    {
+        "left_click",
+        "right_click",
+        "middle_click",
+        "double_click",
+        "triple_click",
+        "left_click_drag",
+        "mouse_move",
+        "left_mouse_down",
+        "left_mouse_up",
+        "scroll",
+        "type",
+        "key",
+        "hold_key",
+        "focus_window",
+        "set_clipboard",
+        "launch",
+    }
+)
 
 
 class ActionError(ValueError):
@@ -44,8 +60,8 @@ class ActionError(ValueError):
 @dataclass
 class ActionResult:
     text: str | None = None
-    data: dict[str, Any] | None = None      # structured extras (cursor json, windows list, pid...)
-    image: desk.Shot | None = None          # for screenshot / zoom
+    data: dict[str, Any] | None = None  # structured extras (cursor json, windows list, pid...)
+    image: desk.Shot | None = None  # for screenshot / zoom
 
     def to_dict(self) -> dict[str, Any]:
         """JSON shape used by REST: {ok, result?, data?, image?{png_base64,width,height,scale,screen}}."""
@@ -67,7 +83,9 @@ class ActionResult:
 
 def scale_for(screen: desk.Screen, max_long_edge: int, max_pixels: int) -> float:
     long_edge = max(screen.width, screen.height)
-    return min(1.0, max_long_edge / long_edge, math.sqrt(max_pixels / (screen.width * screen.height)))
+    return min(
+        1.0, max_long_edge / long_edge, math.sqrt(max_pixels / (screen.width * screen.height))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,10 +203,23 @@ class LaunchAction(ActionBase):
 
 Action = Annotated[
     Union[
-        ScreenshotAction, ZoomAction, ClickAction, DragAction, MouseMoveAction,
-        MouseButtonAction, CursorPositionAction, ScrollAction, TypeAction, KeyAction,
-        HoldKeyAction, WaitAction, ListWindowsAction, FocusWindowAction,
-        GetClipboardAction, SetClipboardAction, LaunchAction,
+        ScreenshotAction,
+        ZoomAction,
+        ClickAction,
+        DragAction,
+        MouseMoveAction,
+        MouseButtonAction,
+        CursorPositionAction,
+        ScrollAction,
+        TypeAction,
+        KeyAction,
+        HoldKeyAction,
+        WaitAction,
+        ListWindowsAction,
+        FocusWindowAction,
+        GetClipboardAction,
+        SetClipboardAction,
+        LaunchAction,
     ],
     Field(discriminator="action"),
 ]
@@ -247,15 +278,23 @@ def _modifiers(data: dict[str, Any]) -> list[str] | None:
 
 
 _CLICK_BUTTON = {
-    "left_click": "left", "right_click": "right", "middle_click": "middle",
-    "double_click": "left", "triple_click": "left",
+    "left_click": "left",
+    "right_click": "right",
+    "middle_click": "middle",
+    "double_click": "left",
+    "triple_click": "left",
 }
 _CLICK_COUNT = {"double_click": 2, "triple_click": 3}
 
 
-def run_action(action: dict[str, Any], *, screen_index: int | None = None,
-               max_long_edge: int = 1568, max_pixels: int = 1_150_000,
-               allow_launch: bool = False) -> ActionResult:
+def run_action(
+    action: dict[str, Any],
+    *,
+    screen_index: int | None = None,
+    max_long_edge: int = 1568,
+    max_pixels: int = 1_150_000,
+    allow_launch: bool = False,
+) -> ActionResult:
     """Validate, resolve the screen (action['screen'] > screen_index > primary), map coordinates,
     call desk.*, return ActionResult. Raises ActionError (400-class) or desk.DeskError (500-class)."""
     data = validate(action)
@@ -277,7 +316,9 @@ def run_action(action: dict[str, Any], *, screen_index: int | None = None,
         x0, y0, x1, y1 = data["region"]
         ax0, ay0 = to_abs([x0, y0])
         ax1, ay1 = to_abs([x1, y1])
-        shot = desk.zoom(screen, (ax0, ay0, ax1, ay1), max_long_edge=max_long_edge, max_pixels=max_pixels)
+        shot = desk.zoom(
+            screen, (ax0, ay0, ax1, ay1), max_long_edge=max_long_edge, max_pixels=max_pixels
+        )
         return ActionResult(image=shot)
 
     if name in _CLICK_BUTTON:
@@ -285,8 +326,13 @@ def run_action(action: dict[str, Any], *, screen_index: int | None = None,
         ax = ay = None
         if coord:
             ax, ay = to_abs(coord)
-        desk.click(ax, ay, button=_CLICK_BUTTON[name], clicks=_CLICK_COUNT.get(name, 1),
-                   modifiers=_modifiers(data))
+        desk.click(
+            ax,
+            ay,
+            button=_CLICK_BUTTON[name],
+            clicks=_CLICK_COUNT.get(name, 1),
+            modifiers=_modifiers(data),
+        )
         if ax is None or ay is None:
             ax, ay = desk.cursor_position()
         return ActionResult(text="OK", data={"absolute": [ax, ay]})
@@ -323,8 +369,9 @@ def run_action(action: dict[str, Any], *, screen_index: int | None = None,
         ax = ay = None
         if coord:
             ax, ay = to_abs(coord)
-        desk.scroll(data["scroll_direction"], data["scroll_amount"], ax, ay,
-                    modifiers=_modifiers(data))
+        desk.scroll(
+            data["scroll_direction"], data["scroll_amount"], ax, ay, modifiers=_modifiers(data)
+        )
         return ActionResult(text="OK")
 
     if name == "type":

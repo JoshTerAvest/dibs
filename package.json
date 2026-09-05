@@ -1,0 +1,26 @@
+{
+  "name": "dibs",
+  "version": "1.0.0",
+  "description": "A local hub that lets many AI agents share one Windows desktop. It exposes screenshot, mouse, keyboard, and window control over HTTP and MCP, so a Claude Code session, a scheduled automation task, and a browsing agent can all drive the same machine without fighting each other — or without shoving the user out of their own chair.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint dibs/dashboard/**/*.js",
+    "format": "prettier --write \"dibs/dashboard/**/*.{js,css,html}\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "eslint": "^10.10.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-html": "^8.2.0",
+    "prettier": "^3.9.6"
+  }
+}

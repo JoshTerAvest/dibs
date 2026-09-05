@@ -4,6 +4,7 @@
 `display`-marked test drives the real cursor around a small square on this machine (it is
 expected that the user sees the cursor move) -- run explicitly with `pytest -m display`.
 """
+
 from __future__ import annotations
 
 import math
@@ -16,6 +17,7 @@ from dibs import desk
 # ---------------------------------------------------------------------------
 # motion_path() -- pure function
 # ---------------------------------------------------------------------------
+
 
 def test_motion_path_starts_and_ends_exactly():
     path = desk.motion_path(100, 200, 500, 350, speed=1.0, seed=1)
@@ -102,6 +104,7 @@ def test_motion_path_zero_distance_does_not_crash():
 # estimate_motion_s()
 # ---------------------------------------------------------------------------
 
+
 def test_estimate_motion_s_matches_motion_path_duration():
     desk.configure_motion(enabled=True, speed=1.0)
     try:
@@ -142,6 +145,7 @@ def test_estimate_motion_s_respects_explicit_speed_override():
 # configure_motion()
 # ---------------------------------------------------------------------------
 
+
 def test_configure_motion_defaults():
     desk.configure_motion()
     assert desk._motion_enabled is True
@@ -177,6 +181,7 @@ def test_configure_motion_disabled_skips_curving(monkeypatch):
 # ---------------------------------------------------------------------------
 # Real cursor -- needs a real Windows desktop.
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.display
 def test_real_mouse_moves_around_a_square_and_returns():

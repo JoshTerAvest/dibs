@@ -19,6 +19,7 @@ this demo just polls and reports it, it doesn't answer the prompt itself) or rai
 locked/paused for agents). Every `acquire()` call below goes through the helpers below so those
 states get logged into the timeline like everything else, whichever mode the server is in.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -90,7 +91,9 @@ def main() -> None:
     def wait_for_desk() -> None:
         try:
             result_holder["result"] = client_b.acquire(wait_s=15)
-            log(f"agent-b's long-poll returns -> {_describe_acquire_result(result_holder['result'])}")
+            log(
+                f"agent-b's long-poll returns -> {_describe_acquire_result(result_holder['result'])}"
+            )
         except DibsError as exc:
             result_holder["error"] = exc
             log(f"agent-b's long-poll returns -> {_describe_denied(exc)}")

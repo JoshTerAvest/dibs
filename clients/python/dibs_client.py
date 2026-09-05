@@ -13,6 +13,7 @@ reach the server.
     png, w, h, scale = client.screenshot()
     client.release()
 """
+
 from __future__ import annotations
 
 from io import BytesIO
@@ -35,7 +36,9 @@ class DibsError(Exception):
     `paused`).
     """
 
-    def __init__(self, status: int, code: str, detail: str = "", payload: dict[str, Any] | None = None):
+    def __init__(
+        self, status: int, code: str, detail: str = "", payload: dict[str, Any] | None = None
+    ):
         super().__init__(detail or code)
         self.status = status
         self.code = code
@@ -143,7 +146,9 @@ class DibsClient:
         """POST /v1/agents. On success, sets self.token to the new agent's token and returns
         the full response ({agent_id, name, purpose, token, created_at})."""
         headers = {"Authorization": f"Bearer {admin_token}"} if admin_token else None
-        result = self._json("POST", "/v1/agents", json_body={"name": name, "purpose": purpose}, headers=headers)
+        result = self._json(
+            "POST", "/v1/agents", json_body={"name": name, "purpose": purpose}, headers=headers
+        )
         if isinstance(result, dict) and result.get("token"):
             self.token = result["token"]
         return result
@@ -194,7 +199,9 @@ class DibsClient:
         the server acquire the desk lease for you if you don't already hold it."""
         return self._json("POST", "/v1/actions", json_body=kwargs)
 
-    def batch(self, actions: Iterable[dict[str, Any]], auto_lease: bool = False) -> list[dict[str, Any]]:
+    def batch(
+        self, actions: Iterable[dict[str, Any]], auto_lease: bool = False
+    ) -> list[dict[str, Any]]:
         body = {"actions": list(actions), "auto_lease": auto_lease}
         result = self._json("POST", "/v1/actions/batch", json_body=body)
         if isinstance(result, dict):
@@ -232,11 +239,17 @@ class DibsClient:
 
     # -- convenience wrappers ---------------------------------------------------------
 
-    def click(self, x: int, y: int, button: str = "left", modifiers: list[str] | str | None = None) -> dict[str, Any]:
-        action_name = {"left": "left_click", "right": "right_click", "middle": "middle_click"}[button]
+    def click(
+        self, x: int, y: int, button: str = "left", modifiers: list[str] | str | None = None
+    ) -> dict[str, Any]:
+        action_name = {"left": "left_click", "right": "right_click", "middle": "middle_click"}[
+            button
+        ]
         kwargs: dict[str, Any] = {"action": action_name, "coordinate": [x, y]}
         if modifiers:
-            kwargs["text"] = "+".join(modifiers) if isinstance(modifiers, (list, tuple)) else modifiers
+            kwargs["text"] = (
+                "+".join(modifiers) if isinstance(modifiers, (list, tuple)) else modifiers
+            )
         return self.action(**kwargs)
 
     def type(self, text: str) -> dict[str, Any]:
@@ -248,8 +261,14 @@ class DibsClient:
             kwargs["repeat"] = repeat
         return self.action(**kwargs)
 
-    def scroll(self, direction: str, amount: int, x: int | None = None, y: int | None = None) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"action": "scroll", "scroll_direction": direction, "scroll_amount": amount}
+    def scroll(
+        self, direction: str, amount: int, x: int | None = None, y: int | None = None
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "action": "scroll",
+            "scroll_direction": direction,
+            "scroll_amount": amount,
+        }
         if x is not None and y is not None:
             kwargs["coordinate"] = [x, y]
         return self.action(**kwargs)
@@ -286,14 +305,16 @@ def computer_tool_handler(client: DibsClient):
 
         image = result.get("image")
         if image:
-            return [{
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/png",
-                    "data": image["png_base64"],
-                },
-            }]
+            return [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": image["png_base64"],
+                    },
+                }
+            ]
 
         text = result.get("result")
         if text is None:

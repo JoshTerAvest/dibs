@@ -3,6 +3,7 @@
 Pytest-asyncio runs in `auto` mode (see pyproject.toml), so plain `async def test_...`
 functions are collected and run as coroutines without an extra decorator.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -163,6 +164,7 @@ async def test_ttl_clamped_to_max():
     result = await lm.acquire("agent-a", "Agent A", ttl_s=99999)
     # expires_at should be close to now + max_ttl_s (120s), not 99999s
     from datetime import datetime, timezone
+
     expires = datetime.fromisoformat(result["expires_at"])
     delta = (expires - datetime.now(timezone.utc)).total_seconds()
     assert 100 < delta <= 121
@@ -175,7 +177,13 @@ async def test_snapshot_shape():
     await lm.acquire("agent-a", "Agent A")
     snap = lm.snapshot()
     assert snap["holder"]["agent_id"] == "agent-a"
-    assert set(snap["holder"].keys()) == {"agent_id", "name", "lease_id", "acquired_at", "expires_at"}
+    assert set(snap["holder"].keys()) == {
+        "agent_id",
+        "name",
+        "lease_id",
+        "acquired_at",
+        "expires_at",
+    }
     assert snap["queue"] == []
 
     await lm.acquire("agent-b", "Agent B", wait_s=0)

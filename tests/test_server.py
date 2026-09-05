@@ -5,6 +5,7 @@ via its `with` context manager. dibs.desk / dibs.actions are monkeypatched by th
 `patch_desk` fixture (pulled in transitively via `make_client` -> `settings_factory`) so
 nothing here touches the real desktop.
 """
+
 from __future__ import annotations
 
 import time
@@ -15,6 +16,7 @@ from tests.conftest import auth_headers, register
 # ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
+
 
 def test_register_open_from_loopback_by_default(make_client):
     with make_client() as client:
@@ -36,8 +38,11 @@ def test_register_requires_admin_when_open_registration_disabled(make_client):
         assert state_resp.status_code == 200
         # fetch the admin token straight off the hub instead (no route exposes it)
         admin_token = client.app.state.hub.admin_token()
-        resp2 = client.post("/v1/agents", json={"name": "agent-a", "purpose": "test"},
-                             headers=auth_headers(admin_token))
+        resp2 = client.post(
+            "/v1/agents",
+            json={"name": "agent-a", "purpose": "test"},
+            headers=auth_headers(admin_token),
+        )
         assert resp2.status_code == 200
 
 
@@ -47,14 +52,18 @@ def test_register_requires_admin_when_not_loopback(make_client):
         assert resp.status_code == 401
 
         admin_token = client.app.state.hub.admin_token()
-        resp2 = client.post("/v1/agents", json={"name": "agent-a", "purpose": "test"},
-                             headers=auth_headers(admin_token))
+        resp2 = client.post(
+            "/v1/agents",
+            json={"name": "agent-a", "purpose": "test"},
+            headers=auth_headers(admin_token),
+        )
         assert resp2.status_code == 200
 
 
 # ---------------------------------------------------------------------------
 # auth
 # ---------------------------------------------------------------------------
+
 
 def test_missing_token_rejected_on_protected_route(make_client):
     with make_client() as client:
@@ -67,8 +76,11 @@ def test_missing_token_rejected_on_protected_route(make_client):
 
 def test_unknown_token_rejected(make_client):
     with make_client() as client:
-        resp = client.post("/v1/actions", json={"action": "wait", "duration": 0},
-                            headers=auth_headers("not-a-real-token"))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "wait", "duration": 0},
+            headers=auth_headers("not-a-real-token"),
+        )
         assert resp.status_code == 401
         assert resp.json()["error"] == "unauthorized"
 
@@ -77,12 +89,16 @@ def test_revoked_token_rejected(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
         admin_token = client.app.state.hub.admin_token()
-        del_resp = client.delete(f"/v1/agents/{agent['agent_id']}",
-                                  headers=auth_headers(admin_token))
+        del_resp = client.delete(
+            f"/v1/agents/{agent['agent_id']}", headers=auth_headers(admin_token)
+        )
         assert del_resp.status_code == 204
 
-        resp = client.post("/v1/actions", json={"action": "wait", "duration": 0},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "wait", "duration": 0},
+            headers=auth_headers(agent["token"]),
+        )
         assert resp.status_code == 401
 
 
@@ -96,6 +112,7 @@ def test_revoke_via_loopback_dashboard_without_token(make_client):
 # ---------------------------------------------------------------------------
 # lease
 # ---------------------------------------------------------------------------
+
 
 def test_lease_grant_and_state_reflects_holder(make_client):
     with make_client() as client:
@@ -208,11 +225,15 @@ def test_lease_expiry_via_sweeper(make_client):
 # actions: lease gating, auto_lease, pause
 # ---------------------------------------------------------------------------
 
+
 def test_input_action_without_lease_is_409(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
-        resp = client.post("/v1/actions", json={"action": "left_click", "coordinate": [1, 1]},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "left_click", "coordinate": [1, 1]},
+            headers=auth_headers(agent["token"]),
+        )
         assert resp.status_code == 409
         body = resp.json()
         assert body["ok"] is False
@@ -225,13 +246,15 @@ def test_screenshot_needs_dibs_too(make_client):
     """Looking at the screen is a privacy act: even a screenshot needs dibs (9/4)."""
     with make_client() as client:
         agent = register(client, "agent-a")
-        denied = client.post("/v1/actions", json={"action": "screenshot"},
-                             headers=auth_headers(agent["token"]))
+        denied = client.post(
+            "/v1/actions", json={"action": "screenshot"}, headers=auth_headers(agent["token"])
+        )
         assert denied.status_code == 409
         assert denied.json()["error"] == "lease_required"
         client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
-        resp = client.post("/v1/actions", json={"action": "screenshot"},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions", json={"action": "screenshot"}, headers=auth_headers(agent["token"])
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
@@ -258,8 +281,11 @@ def test_input_action_with_lease_succeeds_and_touches_lease(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
         client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
-        resp = client.post("/v1/actions", json={"action": "key", "text": "Return"},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "Return"},
+            headers=auth_headers(agent["token"]),
+        )
         assert resp.status_code == 200
         assert resp.json() == {"ok": True, "result": "OK"}
 
@@ -267,8 +293,11 @@ def test_input_action_with_lease_succeeds_and_touches_lease(make_client):
 def test_unknown_action_is_400(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
-        resp = client.post("/v1/actions", json={"action": "not_a_real_action"},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "not_a_real_action"},
+            headers=auth_headers(agent["token"]),
+        )
         assert resp.status_code == 400
         assert resp.json()["error"] == "unknown_action"
 
@@ -277,8 +306,11 @@ def test_launch_disabled_by_default(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
         client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
-        resp = client.post("/v1/actions", json={"action": "launch", "command": "notepad.exe"},
-                            headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "launch", "command": "notepad.exe"},
+            headers=auth_headers(agent["token"]),
+        )
         assert resp.status_code == 403
         assert resp.json()["error"] == "launch_disabled"
 
@@ -291,15 +323,19 @@ def test_pause_blocks_input_but_not_read_only(make_client):
         pause_resp = client.post("/v1/admin/pause", json={"reason": "manual"})
         assert pause_resp.status_code == 200
 
-        blocked = client.post("/v1/actions", json={"action": "key", "text": "a"},
-                               headers=auth_headers(agent["token"]))
+        blocked = client.post(
+            "/v1/actions", json={"action": "key", "text": "a"}, headers=auth_headers(agent["token"])
+        )
         assert blocked.status_code == 423
         body = blocked.json()
         assert body["error"] == "paused"
         assert body["reason"] == "manual"
 
-        still_ok = client.post("/v1/actions", json={"action": "wait", "duration": 0},
-                                headers=auth_headers(agent["token"]))
+        still_ok = client.post(
+            "/v1/actions",
+            json={"action": "wait", "duration": 0},
+            headers=auth_headers(agent["token"]),
+        )
         assert still_ok.status_code == 200
 
         state = client.get("/v1/state").json()
@@ -309,8 +345,9 @@ def test_pause_blocks_input_but_not_read_only(make_client):
         resume_resp = client.post("/v1/admin/resume")
         assert resume_resp.status_code == 200
 
-        unblocked = client.post("/v1/actions", json={"action": "key", "text": "a"},
-                                 headers=auth_headers(agent["token"]))
+        unblocked = client.post(
+            "/v1/actions", json={"action": "key", "text": "a"}, headers=auth_headers(agent["token"])
+        )
         assert unblocked.status_code == 200
 
         state2 = client.get("/v1/state").json()
@@ -328,16 +365,19 @@ def test_admin_pause_requires_admin_when_not_loopback(make_client):
 # batch
 # ---------------------------------------------------------------------------
 
+
 def test_batch_stops_at_first_failure(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
         resp = client.post(
             "/v1/actions/batch",
-            json={"actions": [
-                {"action": "wait", "duration": 0},
-                {"action": "not_a_real_action"},
-                {"action": "wait", "duration": 0},
-            ]},
+            json={
+                "actions": [
+                    {"action": "wait", "duration": 0},
+                    {"action": "not_a_real_action"},
+                    {"action": "wait", "duration": 0},
+                ]
+            },
             headers=auth_headers(agent["token"]),
         )
         assert resp.status_code == 200
@@ -346,8 +386,11 @@ def test_batch_stops_at_first_failure(make_client):
         assert results[0]["ok"] is True
         assert results[1]["ok"] is False
         assert results[1]["error"] == "unknown_action"
-        assert results[2] == {"ok": False, "error": "not_executed",
-                               "detail": "an earlier action in this batch failed"}
+        assert results[2] == {
+            "ok": False,
+            "error": "not_executed",
+            "detail": "an earlier action in this batch failed",
+        }
 
 
 def test_batch_all_succeed(make_client):
@@ -355,8 +398,10 @@ def test_batch_all_succeed(make_client):
         agent = register(client, "agent-a")
         resp = client.post(
             "/v1/actions/batch",
-            json={"actions": [{"action": "wait", "duration": 0}, {"action": "screenshot"}],
-                  "auto_lease": True},
+            json={
+                "actions": [{"action": "wait", "duration": 0}, {"action": "screenshot"}],
+                "auto_lease": True,
+            },
             headers=auth_headers(agent["token"]),
         )
         assert resp.status_code == 200
@@ -368,20 +413,35 @@ def test_batch_all_succeed(make_client):
 # audit
 # ---------------------------------------------------------------------------
 
+
 def test_audit_rows_appear_with_expected_shape(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
         client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
-        client.post("/v1/actions", json={"action": "screenshot"},
-                    headers=auth_headers(agent["token"]))
-        client.post("/v1/actions", json={"action": "not_a_real_action"},
-                    headers=auth_headers(agent["token"]))
+        client.post(
+            "/v1/actions", json={"action": "screenshot"}, headers=auth_headers(agent["token"])
+        )
+        client.post(
+            "/v1/actions",
+            json={"action": "not_a_real_action"},
+            headers=auth_headers(agent["token"]),
+        )
 
         rows = client.get("/v1/audit").json()
         assert len(rows) >= 2
         row = rows[0]
-        for key in ("id", "ts", "agent_id", "agent_name", "action", "input", "ok", "error",
-                    "duration_ms", "screenshot_url"):
+        for key in (
+            "id",
+            "ts",
+            "agent_id",
+            "agent_name",
+            "action",
+            "input",
+            "ok",
+            "error",
+            "duration_ms",
+            "screenshot_url",
+        ):
             assert key in row
         assert row["agent_id"] == agent["agent_id"]
         assert row["agent_name"] == "agent-a"
@@ -417,11 +477,25 @@ def test_audit_filters_by_agent_id(make_client):
 # state / display shapes
 # ---------------------------------------------------------------------------
 
+
 def test_state_shape(make_client):
     with make_client() as client:
         state = client.get("/v1/state").json()
-        for key in ("version", "uptime_s", "paused", "pause_reason", "paused_at", "lease",
-                    "agents", "display", "stats", "config", "mode", "human", "consent"):
+        for key in (
+            "version",
+            "uptime_s",
+            "paused",
+            "pause_reason",
+            "paused_at",
+            "lease",
+            "agents",
+            "display",
+            "stats",
+            "config",
+            "mode",
+            "human",
+            "consent",
+        ):
             assert key in state
         assert set(state["lease"].keys()) == {"holder", "queue"}
         assert set(state["stats"].keys()) == {"actions_total", "actions_failed", "actions_last_5m"}
@@ -449,6 +523,7 @@ def test_display_shape(make_client):
 # dashboard cookie gate + shutdown (9/4 privacy rule)
 # ---------------------------------------------------------------------------
 
+
 def test_loopback_without_dashboard_cookie_is_401(make_client):
     with make_client() as client:
         client.cookies.clear()
@@ -470,4 +545,3 @@ def test_admin_shutdown_needs_hook_and_calls_it(make_client):
         hub.request_shutdown = lambda: calls.append(1)
         resp = client.post("/v1/admin/shutdown")
         assert resp.status_code == 200 and resp.json()["stopping"] is True
-

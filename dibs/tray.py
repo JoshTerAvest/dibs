@@ -8,6 +8,7 @@ The tray is polling-based so the hub's integration surface stays tiny: give it a
 object and a dashboard URL, call `start()` / `stop()`. Every `TrayActions` method may be called
 from the tray's own threads.
 """
+
 from __future__ import annotations
 
 import logging
@@ -48,6 +49,7 @@ class TrayActions(Protocol):
 # ---------------------------------------------------------------------------
 # Pure helpers (unit-tested without a display)
 # ---------------------------------------------------------------------------
+
 
 def _seconds_left(iso: str | None) -> int | None:
     if not iso:
@@ -107,7 +109,9 @@ def make_icon(state_name: str, size: int = 64) -> Image.Image:
     # Alpha falls off smoothly to 0 at the edge because of the blur, not a hard ring.
     glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     glow_pad = max(0, pad - size // 12)
-    ImageDraw.Draw(glow).ellipse((glow_pad, glow_pad, size - glow_pad, size - glow_pad), fill=rgb + (150,))
+    ImageDraw.Draw(glow).ellipse(
+        (glow_pad, glow_pad, size - glow_pad, size - glow_pad), fill=rgb + (150,)
+    )
     glow = glow.filter(ImageFilter.GaussianBlur(radius=size / 9))
     img = Image.alpha_composite(img, glow)
 
@@ -147,25 +151,57 @@ def menu_spec(state: dict[str, Any], app_name: str = "dibs") -> list[dict[str, A
 
     items: list[dict[str, Any]] = [
         {"kind": "item", "text": detail, "action": None, "enabled": False},
-        {"kind": "item", "text": "Open monitor", "action": "open", "enabled": True, "default": True},
+        {
+            "kind": "item",
+            "text": "Open monitor",
+            "action": "open",
+            "enabled": True,
+            "default": True,
+        },
     ]
     if paused:
         items.append({"kind": "item", "text": "Resume agents", "action": "resume", "enabled": True})
     else:
         items.append({"kind": "item", "text": "Pause agents", "action": "pause", "enabled": True})
-    items.append({"kind": "item", "text": "Take the desk back", "action": "release", "enabled": bool(holder)})
+    items.append(
+        {"kind": "item", "text": "Take the desk back", "action": "release", "enabled": bool(holder)}
+    )
     if pending:
         who = pending.get("name") or "agent"
-        items.append({"kind": "item", "text": f"Allow {who} (5 min)", "action": ("allow", pending.get("request_id")), "enabled": True})
-        items.append({"kind": "item", "text": f"Deny {who}", "action": ("deny", pending.get("request_id")), "enabled": True})
+        items.append(
+            {
+                "kind": "item",
+                "text": f"Allow {who} (5 min)",
+                "action": ("allow", pending.get("request_id")),
+                "enabled": True,
+            }
+        )
+        items.append(
+            {
+                "kind": "item",
+                "text": f"Deny {who}",
+                "action": ("deny", pending.get("request_id")),
+                "enabled": True,
+            }
+        )
     items.append({"kind": "sep"})
-    items.append({
-        "kind": "submenu", "text": "Mode", "items": [
-            {"kind": "item", "text": label, "action": ("mode", key), "enabled": True,
-             "checked": mode == key, "radio": True}
-            for key, label in MODE_LABELS.items()
-        ],
-    })
+    items.append(
+        {
+            "kind": "submenu",
+            "text": "Mode",
+            "items": [
+                {
+                    "kind": "item",
+                    "text": label,
+                    "action": ("mode", key),
+                    "enabled": True,
+                    "checked": mode == key,
+                    "radio": True,
+                }
+                for key, label in MODE_LABELS.items()
+            ],
+        }
+    )
     items.append({"kind": "sep"})
     items.append({"kind": "item", "text": f"Quit {app_name}", "action": "quit", "enabled": True})
     return items
@@ -174,6 +210,7 @@ def menu_spec(state: dict[str, Any], app_name: str = "dibs") -> list[dict[str, A
 # ---------------------------------------------------------------------------
 # Tray implementations
 # ---------------------------------------------------------------------------
+
 
 class NullTray:
     def __init__(self) -> None:
@@ -192,8 +229,9 @@ class NullTray:
 class Tray:
     """pystray-backed tray icon. `start()` spawns the icon thread and a 1 s poller."""
 
-    def __init__(self, actions: TrayActions, dashboard_url: str, app_name: str = "dibs",
-                 poll_s: float = 1.0) -> None:
+    def __init__(
+        self, actions: TrayActions, dashboard_url: str, app_name: str = "dibs", poll_s: float = 1.0
+    ) -> None:
         self.actions = actions
         self.dashboard_url = dashboard_url
         self.app_name = app_name
@@ -221,14 +259,19 @@ class Tray:
         try:
             state = self._safe_state()
             name, title, _ = derive_state(state, self.app_name)
-            self._icon = pystray.Icon(self.app_name, icon=icon_for(name), title=title,
-                                      menu=self._build_menu(state))
+            self._icon = pystray.Icon(
+                self.app_name, icon=icon_for(name), title=title, menu=self._build_menu(state)
+            )
             self.last_title, self.last_state = title, name
             self._stop.clear()
             self._ready.clear()
-            self._icon_thread = threading.Thread(target=self._run_icon, name="dibs-tray", daemon=True)
+            self._icon_thread = threading.Thread(
+                target=self._run_icon, name="dibs-tray", daemon=True
+            )
             self._icon_thread.start()
-            self._poll_thread = threading.Thread(target=self._poll, name="dibs-tray-poll", daemon=True)
+            self._poll_thread = threading.Thread(
+                target=self._poll, name="dibs-tray-poll", daemon=True
+            )
             self._poll_thread.start()
             self.available = True
         except Exception:  # noqa: BLE001
@@ -240,7 +283,7 @@ class Tray:
         self._wake.set()
         icon, self._icon = self._icon, None
         if icon is not None:
-            self._ready.wait(2.0)   # stop() before run() has begun would strand the icon thread
+            self._ready.wait(2.0)  # stop() before run() has begun would strand the icon thread
             try:
                 icon.stop()
             except Exception:  # noqa: BLE001
@@ -289,7 +332,15 @@ class Tray:
         name, title, detail = derive_state(state, self.app_name)
         holder = (state.get("lease") or {}).get("holder") or {}
         pending = (state.get("consent") or {}).get("pending") or {}
-        key = (name, title, detail, pending.get("request_id"), state.get("mode"), holder.get("name"), bool(state.get("paused")))
+        key = (
+            name,
+            title,
+            detail,
+            pending.get("request_id"),
+            state.get("mode"),
+            holder.get("name"),
+            bool(state.get("paused")),
+        )
         if key != self._last_key:
             self._last_key = key
             icon.icon = icon_for(name)
@@ -335,12 +386,18 @@ class Tray:
                 elif e["kind"] == "submenu":
                     out.append(pystray.MenuItem(e["text"], pystray.Menu(*to_items(e["items"]))))
                 else:
-                    out.append(pystray.MenuItem(
-                        e["text"], self._action_for(e.get("action")),
-                        enabled=e.get("enabled", True), default=e.get("default", False),
-                        checked=(lambda item, c=e.get("checked", False): c) if e.get("radio") else None,
-                        radio=e.get("radio", False),
-                    ))
+                    out.append(
+                        pystray.MenuItem(
+                            e["text"],
+                            self._action_for(e.get("action")),
+                            enabled=e.get("enabled", True),
+                            default=e.get("default", False),
+                            checked=(lambda item, c=e.get("checked", False): c)
+                            if e.get("radio")
+                            else None,
+                            radio=e.get("radio", False),
+                        )
+                    )
             return out
 
         return pystray.Menu(*to_items(menu_spec(state, self.app_name)))
@@ -370,8 +427,9 @@ class Tray:
         return None
 
 
-def create(actions: TrayActions, dashboard_url: str, enabled: bool = True,
-           app_name: str = "dibs") -> Tray | NullTray:
+def create(
+    actions: TrayActions, dashboard_url: str, enabled: bool = True, app_name: str = "dibs"
+) -> Tray | NullTray:
     if not enabled:
         return NullTray()
     try:
