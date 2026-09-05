@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.jsonl text eol=lf
+
+# Use bd merge for beads JSONL files
+.beads/issues.jsonl merge=beads

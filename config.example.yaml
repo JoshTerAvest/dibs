@@ -1,0 +1,37 @@
+# dibs config. Copy to config.yaml (or point DIBS_CONFIG at it). Every key is also
+# overridable via env: DIBS_PORT=7475, DIBS_PRESENCE__ENABLED=false, DIBS_MODE=hands_off, ...
+host: 127.0.0.1        # 0.0.0.0 to expose on Tailscale; auth then required everywhere
+port: 7474
+data_dir: ./data
+screen_index: null      # null = primary monitor
+max_long_edge: 1568     # 2576 for models with the larger image limits
+max_pixels: 1150000     # 3750000 for the larger limits
+lease_default_ttl_s: 60
+lease_max_ttl_s: 600
+auto_lease_wait_s: 30
+allow_local_open_registration: true
+dashboard_open_on_loopback: true
+allow_launch: false     # let agents start processes (dibs action "launch")
+keep_screenshots: 200
+mode: ask                 # ask | hands_off | locked
+presence:
+  enabled: true
+  idle_after_s: 30
+  resume_after_s: 20
+  consent_timeout_s: 60
+  consent_grant_s: 300
+  deny_cooldown_s: 120
+overlay:
+  enabled: true
+  halo_color: "#00e5ff"
+  banner: true
+tray:
+  enabled: true         # state-coloured tray icon with Pause / Take the desk back / Mode / Allow / Deny
+motion:
+  human_like: true
+  speed: 1.0
+hotkeys:
+  pause: ctrl+alt+shift+p
+  allow: ctrl+alt+shift+y
+  deny: ctrl+alt+shift+n
+  release: ctrl+alt+shift+r
