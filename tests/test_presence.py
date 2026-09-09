@@ -197,3 +197,23 @@ def test_move_streak_resets_after_a_gap():
     p._on_move(3, 4, injected=False)
     assert p._move_streak_start != first_start
     assert p.move_streak_s() < 0.1
+
+
+def test_physical_escape_is_seen_inside_the_agent_input_window():
+    """The hub marks the whole consent-grace window as agent input so the accept gesture is
+    ignored; a real Esc must still get through as the cancel, while an injected Esc never does."""
+    import time
+
+    from pynput import keyboard
+
+    from dibs.presence import Presence
+
+    seen = []
+    p = Presence(idle_after_s=30, on_escape=lambda: seen.append(1))
+    p.agent_input_until(time.monotonic() + 5)
+    p._on_press(keyboard.Key.esc, injected=False)
+    assert seen == [1]
+    p._on_press(keyboard.Key.esc, injected=True)
+    assert seen == [1]
+    p._on_press(keyboard.KeyCode.from_char("a"), injected=False)
+    assert seen == [1]

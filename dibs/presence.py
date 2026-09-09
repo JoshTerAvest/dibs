@@ -235,6 +235,15 @@ class Presence:
 
     def _on_press(self, key: Any, injected: bool = False) -> None:
         mod = self._update_mod_state(key, True)
+        # A physical Escape is the human's cancel and must be seen even inside the agent-input
+        # window (the hub marks the whole consent-grace window as agent-attributable so the
+        # accept gesture is ignored -- which would otherwise swallow this too). Injected Esc
+        # (an agent pressing the key) never counts.
+        if not injected and self.on_escape is not None and self._is_escape(key):
+            try:
+                self.on_escape()
+            except Exception:
+                logger.exception("on_escape callback failed")
         if self._is_agent_generated(injected):
             return
         if mod is not None:
@@ -244,11 +253,6 @@ class Presence:
         if self._chord_active():
             # ctrl+alt+shift+<key> -- one of our own hotkeys (or shaped exactly like one).
             return
-        if self.on_escape is not None and self._is_escape(key):
-            try:
-                self.on_escape()
-            except Exception:
-                logger.exception("on_escape callback failed")
         self._register_human("key")
 
     @staticmethod
