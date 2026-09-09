@@ -23,7 +23,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -173,6 +172,7 @@ def build_fake_app() -> FastAPI:
             state["fail_next_action"] = None
             raise _err(err["status"], err["error"], err["detail"], **err.get("extra", {}))
 
+        state["last_action_body"] = body
         action_name = body.get("action")
         if action_name in ("screenshot", "zoom"):
             png = _make_png(4, 3)
@@ -338,6 +338,28 @@ def test_action_and_click_convenience(client: DibsClient):
 
     result4 = client.scroll("down", 3, x=5, y=6)
     assert result4["result"] == "OK"
+
+
+def test_ui_tree_find_click_element_convenience(client: DibsClient):
+    client.token = AGENT_TOKEN
+
+    client.ui_tree(hwnd=42, max_depth=3, roles=["Button"])
+    body = client.test_app.state.internal["last_action_body"]
+    assert body == {"action": "ui_tree", "hwnd": 42, "max_depth": 3, "roles": ["Button"]}
+
+    client.find("Seven", role="Button", near="Display", exact=True)
+    body = client.test_app.state.internal["last_action_body"]
+    assert body == {
+        "action": "find",
+        "text": "Seven",
+        "role": "Button",
+        "near": "Display",
+        "exact": True,
+    }
+
+    client.click_element("Seven", button="right", double=True)
+    body = client.test_app.state.internal["last_action_body"]
+    assert body == {"action": "click_element", "text": "Seven", "button": "right", "double": True}
 
 
 def test_action_error_maps_to_dibs_error(client: DibsClient):

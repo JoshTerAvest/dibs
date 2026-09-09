@@ -284,6 +284,15 @@ function renderHuman(state) {
     chip.className = 'chip chip-unknown';
     return;
   }
+  if (human.takeover_armed === false && human.takeover_arms_at) {
+    const remaining = Math.max(
+      0,
+      Math.ceil((new Date(human.takeover_arms_at) - Date.now()) / 1000)
+    );
+    chip.textContent = `Human: hands off in ${remaining}s`;
+    chip.className = 'chip chip-active';
+    return;
+  }
   chip.textContent = human.active
     ? `Human: active (${formatAgoSeconds(human.last_input_ago_s)} ago)`
     : `Human: idle ${formatAgoSeconds(human.last_input_ago_s)}`;

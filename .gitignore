@@ -13,3 +13,6 @@ dist/
 *.db
 .beads-credential-key
 .beads/embeddeddolt/
+
+# written by the uiautomation package into cwd
+@AutomationLog.txt

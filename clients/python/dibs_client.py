@@ -16,8 +16,9 @@ reach the server.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Any, Iterable
+from typing import Any
 
 import httpx
 
@@ -83,7 +84,7 @@ class DibsClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "DibsClient":
+    def __enter__(self) -> DibsClient:
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
@@ -196,15 +197,33 @@ class DibsClient:
     def action(self, **kwargs: Any) -> dict[str, Any]:
         """POST /v1/actions with the given action fields, e.g.
         `client.action(action="left_click", coordinate=[1, 2])`. Pass `auto_lease=True` to have
-        the server acquire the desk lease for you if you don't already hold it."""
+        the server acquire the desk lease for you if you don't already hold it. Pass
+        `screenshot_after=True` to have the response include a `screenshot` key (same shape as
+        `image`) captured right after the action runs."""
         return self._json("POST", "/v1/actions", json_body=kwargs)
 
     def batch(
-        self, actions: Iterable[dict[str, Any]], auto_lease: bool = False
-    ) -> list[dict[str, Any]]:
-        body = {"actions": list(actions), "auto_lease": auto_lease}
+        self,
+        actions: Iterable[dict[str, Any]],
+        auto_lease: bool = False,
+        *,
+        screenshot_after: bool = False,
+        screen: int | None = None,
+    ) -> list[dict[str, Any]] | dict[str, Any]:
+        """POST /v1/actions/batch. Returns just the `results` list by default (back-compat); if
+        `screenshot_after=True`, returns the full `{"results": [...], "screenshot": {...}}` dict
+        instead so the trailing screenshot (captured after the last successful action, or where
+        the batch stopped early on error) isn't dropped. `screen` selects which screen that
+        screenshot is taken from (default screen otherwise)."""
+        body: dict[str, Any] = {"actions": list(actions), "auto_lease": auto_lease}
+        if screenshot_after:
+            body["screenshot_after"] = True
+        if screen is not None:
+            body["screen"] = screen
         result = self._json("POST", "/v1/actions/batch", json_body=body)
         if isinstance(result, dict):
+            if screenshot_after:
+                return result
             return result.get("results", [])
         return result
 
@@ -266,6 +285,82 @@ class DibsClient:
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "action": "scroll",
+            "scroll_direction": direction,
+            "scroll_amount": amount,
+        }
+        if x is not None and y is not None:
+            kwargs["coordinate"] = [x, y]
+        return self.action(**kwargs)
+
+    # -- UI Automation: prefer these over screenshot+coordinate guessing when the target has
+    # a visible label or accessible name -- they read the real UI Automation tree, so they
+    # survive scrolling/resizing that would move a hard-coded pixel coordinate off target.
+
+    def ui_tree(
+        self,
+        hwnd: int | None = None,
+        title: str | None = None,
+        max_depth: int | None = None,
+        max_nodes: int | None = None,
+        roles: list[str] | None = None,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"action": "ui_tree"}
+        for key, value in (
+            ("hwnd", hwnd),
+            ("title", title),
+            ("max_depth", max_depth),
+            ("max_nodes", max_nodes),
+            ("roles", roles),
+        ):
+            if value is not None:
+                kwargs[key] = value
+        return self.action(**kwargs)
+
+    def find(
+        self,
+        text: str,
+        role: str | None = None,
+        near: str | None = None,
+        hwnd: int | None = None,
+        title: str | None = None,
+        exact: bool = False,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"action": "find", "text": text}
+        for key, value in (("role", role), ("near", near), ("hwnd", hwnd), ("title", title)):
+            if value is not None:
+                kwargs[key] = value
+        if exact:
+            kwargs["exact"] = True
+        return self.action(**kwargs)
+
+    def click_element(
+        self,
+        text: str,
+        role: str | None = None,
+        near: str | None = None,
+        hwnd: int | None = None,
+        title: str | None = None,
+        exact: bool = False,
+        button: str = "left",
+        double: bool = False,
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"action": "click_element", "text": text, "button": button}
+        for key, value in (("role", role), ("near", near), ("hwnd", hwnd), ("title", title)):
+            if value is not None:
+                kwargs[key] = value
+        if exact:
+            kwargs["exact"] = True
+        if double:
+            kwargs["double"] = True
+        return self.action(**kwargs)
+
+    def scroll_pages(
+        self, direction: str, amount: int, x: int | None = None, y: int | None = None
+    ) -> dict[str, Any]:
+        """Page-granularity scroll (Page_Up/Page_Down `amount` times); clicks (x, y) first if
+        given. More reliable than `scroll` against pages/apps that smooth-scroll (e.g. Chrome)."""
+        kwargs: dict[str, Any] = {
+            "action": "scroll_pages",
             "scroll_direction": direction,
             "scroll_amount": amount,
         }

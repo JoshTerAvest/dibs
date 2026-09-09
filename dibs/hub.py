@@ -9,19 +9,19 @@ takeover / overlay hookups supersede the v0.1 "human override" section).
 from __future__ import annotations
 
 import asyncio
-import os
 import concurrent.futures
 import logging
 import math
+import os
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Any
+from typing import Any
 
-from . import actions, desk, overlay, presence, tray
-from . import __version__
+from . import __version__, actions, desk, overlay, presence, tray
 from .actions import ActionResult
 from .audit import AuditLog
 from .config import Settings
@@ -44,16 +44,17 @@ _CLICK_FLASH_BUTTON = {
     "triple_click": "left",
     "right_click": "right",
     "middle_click": "middle",
+    "click_element": "left",
 }
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _iso(ts: float) -> str:
     """time.time()-style epoch seconds -> ISO 8601 UTC string."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(ts, tz=UTC).isoformat()
 
 
 def _estimate_action_duration(action: dict[str, Any]) -> float:
@@ -156,7 +157,7 @@ class _TrayActions:
     """Tray -> hub bridge. The tray calls these from its own threads; everything is marshalled onto
     the hub's event loop so lease/consent state is only ever touched from one thread."""
 
-    def __init__(self, hub: "Hub") -> None:
+    def __init__(self, hub: Hub) -> None:
         self.hub = hub
 
     def _on_loop(self, fn):
@@ -224,6 +225,15 @@ class Hub:
         self._pause_reason: str | None = None
         self._pause_manual = True
         self._paused_at: str | None = None
+        self._not_paused_event = asyncio.Event()
+        self._not_paused_event.set()
+
+        # Consent-to-stillness grace (item 1): human input observed before this monotonic
+        # timestamp never arms a takeover, belt-and-braces on top of presence's own
+        # agent_input_until() filtering.
+        self._takeover_armed_at: float = 0.0
+        self._takeover_armed_at_wall: float | None = None
+        self._grace_countdown_task: asyncio.Task | None = None
 
         self._action_lock = asyncio.Lock()
 
@@ -273,10 +283,10 @@ class Hub:
         self._start_hotkey_listener()
 
     async def stop(self) -> None:
-        for task in (self._lease_task, self._presence_task):
+        for task in (self._lease_task, self._presence_task, self._grace_countdown_task):
             if task is not None:
                 task.cancel()
-        for task in (self._lease_task, self._presence_task):
+        for task in (self._lease_task, self._presence_task, self._grace_countdown_task):
             if task is not None:
                 try:
                     await task
@@ -284,6 +294,7 @@ class Hub:
                     pass
         self._lease_task = None
         self._presence_task = None
+        self._grace_countdown_task = None
 
         if self._hotkey_listener is not None:
             try:
@@ -527,6 +538,10 @@ class Hub:
             return None
 
         if self._agent_may_take_desk(agent):
+            # Grant without a fresh prompt (hands_off mode, or an existing consent window) --
+            # the human may still be at the keyboard from typing the request, so grace applies
+            # here too (item 1).
+            self._arm_takeover_grace()
             return await self._lease.acquire(agent.agent_id, agent.name, ttl_s=ttl_s, wait_s=0)
 
         if self._pending_consent is None:
@@ -595,7 +610,7 @@ class Hub:
         return "timeout", p
 
     def _maybe_auto_allow_on_idle(self) -> tuple[str, ConsentRequest] | None:
-        """Disabled on purpose (9/4): a pending request never resolves itself because the
+        """Disabled on purpose (v0.2 design decision): a pending request never resolves itself because the
         human walked away. It waits for a decision or times out to deny."""
         return None
 
@@ -605,6 +620,9 @@ class Hub:
         now = time.time()
         if decision in ("allow", "human_idle"):
             self._consent_windows[p.agent_id] = now + self.settings.presence.consent_grant_s
+            # The human's own accept gesture (hotkey release, mouse-off-button, dashboard
+            # click) must not read as a takeover (item 1).
+            self._arm_takeover_grace()
         elif decision == "deny":
             self._deny_cooldowns[p.agent_id] = now + self.settings.presence.deny_cooldown_s
         self._consent_recent.append(
@@ -690,6 +708,7 @@ class Hub:
         self._pause_reason = reason
         self._pause_manual = manual
         self._paused_at = _now_iso()
+        self._not_paused_event.clear()
         try:
             self.overlay.set_paused(reason)
         except Exception:
@@ -700,6 +719,7 @@ class Hub:
         self._pause_reason = None
         self._pause_manual = True
         self._paused_at = None
+        self._not_paused_event.set()
         try:
             self.overlay.set_paused(None)
         except Exception:
@@ -707,35 +727,97 @@ class Hub:
 
     # ---- human presence / takeover (SPEC-v0.2 §2.3) ----
 
-    def _on_human_input(self) -> None:
-        """Presence callback -- invoked from the pynput listener thread."""
+    def _arm_takeover_grace(self) -> None:
+        """Ignore human input for `presence.consent_grace_s` after a consent grant (item 1)."""
+        grace = max(0.0, self.settings.presence.consent_grace_s)
+        now_mono = time.monotonic()
+        armed_at = now_mono + grace
+        self._takeover_armed_at = max(self._takeover_armed_at, armed_at)
+        self._takeover_armed_at_wall = time.time() + grace
+        # Belt-and-braces: also tell presence this window is agent-attributable so it doesn't
+        # count toward human_active() either.
+        self._presence.agent_input_until(armed_at)
+        self._start_grace_countdown(grace)
+
+    def _start_grace_countdown(self, grace: float) -> None:
+        if self._loop is None or grace <= 0:
+            return
+        if self._grace_countdown_task is not None and not self._grace_countdown_task.done():
+            self._grace_countdown_task.cancel()
+
+        async def _run() -> None:
+            total = int(math.ceil(grace))
+            try:
+                for i in range(total, 0, -1):
+                    try:
+                        self.overlay.notify(f"hands off in {i}", 1.0)
+                    except Exception:
+                        logger.exception("overlay.notify failed")
+                    await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                pass
+
+        self._grace_countdown_task = self._loop.create_task(_run())
+
+    def _takeover_grace_active(self) -> bool:
+        return time.monotonic() < self._takeover_armed_at
+
+    def _on_human_input(self, kind: str | None = None) -> None:
+        """Presence callback -- invoked from the pynput listener thread. `kind` is one of
+        move/scroll/click/key (item 2); older/test callers may omit it, which is treated as a
+        deliberate (click-equivalent) input for backward compatibility."""
         loop = self._loop
         if loop is not None:
-            loop.call_soon_threadsafe(self._handle_human_input_on_loop)
+            loop.call_soon_threadsafe(self._handle_human_input_on_loop, kind)
         else:
-            self._handle_human_input_on_loop()
+            self._handle_human_input_on_loop(kind)
 
-    def _handle_human_input_on_loop(self) -> None:
-        if self._lease.holder_agent_id() is not None:
-            self._human_takeover()
+    def _handle_human_input_on_loop(self, kind: str | None = None) -> None:
+        if self._lease.holder_agent_id() is None:
+            return
+        if self._takeover_grace_active():
+            # Belt-and-braces: drop input observed before the grace window arms, even if it
+            # somehow wasn't caught by presence's agent_input_until() filtering.
+            return
+        tier = "revoke"
+        if kind in ("move", "scroll"):
+            streak_s = self._presence.move_streak_s()
+            if streak_s is not None and streak_s < self.settings.presence.revoke_after_s:
+                tier = "pause"
+        if (
+            tier == "pause"
+            and self._paused
+            and not self._pause_manual
+            and self._pause_reason == "human_took_the_mouse"
+        ):
+            # Already in the pause tier with the lease intact: every further move event would
+            # otherwise re-record a takeover and re-flash the overlay. Only an escalation to
+            # revoke (click/key, or the streak outgrowing revoke_after_s) is news.
+            return
+        self._human_takeover(tier=tier)
 
     def human_release(self) -> None:
         """Explicit human release: hotkey R or POST /v1/admin/release. Always pauses, even with
         nobody holding the desk right now (SPEC-v0.2 §2.3)."""
-        self._human_takeover(force_pause=True)
+        self._human_takeover(tier="revoke", force_pause=True)
 
-    def _human_takeover(self, *, force_pause: bool = False) -> None:
+    def _human_takeover(self, *, tier: str = "revoke", force_pause: bool = False) -> None:
+        """tier='pause' (brief move/scroll only, item 2a) keeps the lease and just pauses.
+        tier='revoke' (click/key, or movement past revoke_after_s, item 2b) force-releases it,
+        same as before."""
         holder_id = self._lease.holder_agent_id()
-        revoked = holder_id is not None
-        if revoked:
-            self._lease.release(holder_id, force=True)
-            self._update_overlay_holder()
-        if revoked or force_pause:
+        revoked = False
+        if tier == "revoke" or force_pause:
+            revoked = holder_id is not None
+            if revoked:
+                self._lease.release(holder_id, force=True)
+                self._update_overlay_holder()
+        if revoked or force_pause or tier == "pause":
             self.pause("human_took_the_mouse", manual=False)
             self._audit.record(
                 agent_id=holder_id or "human",
                 action="human_takeover",
-                input_data={"holder": holder_id},
+                input_data={"holder": holder_id, "tier": tier},
                 ok=True,
                 error=None,
                 duration_ms=0,
@@ -827,12 +909,38 @@ class Hub:
                 # the physical desk may still be paused (failsafe, a manual pause, or a
                 # takeover pause that hasn't auto-resumed yet).
                 if self._paused:
-                    raise HubError(
-                        423,
-                        "paused",
-                        detail=self._pause_reason or "paused",
-                        payload={"reason": self._pause_reason},
-                    )
+                    if self._pause_reason == "human_took_the_mouse" and not self._pause_manual:
+                        effective_wait = wait_s
+                        if effective_wait is None:
+                            effective_wait = self.settings.auto_lease_wait_s if auto_lease else 0
+                        effective_wait = max(0, effective_wait)
+                        remaining = effective_wait - (time.monotonic() - start)
+                        if remaining > 0:
+                            try:
+                                await asyncio.wait_for(
+                                    self._not_paused_event.wait(), timeout=remaining
+                                )
+                            except TimeoutError:
+                                pass
+                        if self._paused:
+                            waited = round(time.monotonic() - start, 1)
+                            raise HubError(
+                                423,
+                                "paused",
+                                detail=(
+                                    f"paused: {self._pause_reason} "
+                                    f"(waited {waited}s; human still active)"
+                                ),
+                                payload={"reason": self._pause_reason, "waited_s": waited},
+                            )
+                        # else: resumed while we waited -- fall through and run the action.
+                    else:
+                        raise HubError(
+                            423,
+                            "paused",
+                            detail=self._pause_reason or "paused",
+                            payload={"reason": self._pause_reason},
+                        )
 
             show_typing = not read_only and action_name in _TYPING_ACTIONS
             if not read_only:
@@ -938,6 +1046,13 @@ class Hub:
             )
         uptime = time.monotonic() - self._start_time if self._start_time is not None else 0.0
         now = time.time()
+        now_mono = time.monotonic()
+        takeover_armed = now_mono >= self._takeover_armed_at
+        human_snap = dict(self._presence.snapshot())
+        human_snap["takeover_armed"] = takeover_armed
+        human_snap["takeover_arms_at"] = (
+            None if takeover_armed else _iso(self._takeover_armed_at_wall or now)
+        )
         return {
             "version": __version__,
             "uptime_s": int(uptime),
@@ -949,7 +1064,7 @@ class Hub:
             "display": self.display(),
             "stats": self._audit.stats(),
             "mode": self.settings.mode,
-            "human": self._presence.snapshot(),
+            "human": human_snap,
             "consent": {
                 "pending": self._pending_consent.to_dict() if self._pending_consent else None,
                 "windows": [

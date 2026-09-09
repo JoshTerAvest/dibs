@@ -32,5 +32,21 @@ switch, human-override when the user moves the mouse, an audit log, and a web da
   window (Calculator, a solid-colour test window) or the mock dashboard server
   (`tests/dashboard_mock_server.py`), never Notepad/browser/real session windows.
 
+## When the MCP link is down
+
+The `dibs` MCP server only connects at session start. If it failed (server not running,
+token rotated), do not conclude dibs is unavailable:
+
+1. `Invoke-WebRequest http://127.0.0.1:7474/healthz`. If that fails, `Start-ScheduledTask dibs`
+   (or `uv run dibs restart` from the repo) and wait about 10 s. `scripts/watchdog.ps1` does
+   this every 5 minutes once `scripts/install-watchdog.ps1` has been run.
+2. Drive the REST API directly: `POST /v1/agents` (open from loopback) returns a bearer token;
+   then `POST /v1/lease`, `POST /v1/actions/batch` with `auto_lease: true`, and
+   `GET /v1/screenshot.png`. The README "REST" section has the exact bodies. Prefer `find` /
+   `click_element` over screenshot-plus-coordinates when the target has a label, and
+   `scroll_pages` for web pages.
+3. Every action except `wait` needs the desk, and Ask mode grants it only on an explicit yes.
+   Tell the user to accept the prompt and keep hands off. A brief touch pauses; a click revokes.
+
 ## Design standard
 All human-facing UI (dashboard, overlay, tray, prompts, CLI copy, README) follows `docs/DESIGN-PRINCIPLES.md`. Read it before touching any of those.

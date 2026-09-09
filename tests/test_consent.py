@@ -9,12 +9,13 @@ which constructs the Presence instance -- isn't built until `make_client(...)` i
 
 from __future__ import annotations
 
+import threading
 import time as time_mod
 
 import pytest
 
-from tests.conftest import auth_headers, register
 from dibs import hub as hub_mod
+from tests.conftest import auth_headers, register
 
 
 class FakePresence:
@@ -26,6 +27,7 @@ class FakePresence:
         self.idle_after_s = idle_after_s
         self.on_human_input = on_human_input
         self._last_human_monotonic: float | None = None
+        self._move_streak_start: float | None = None
         self.started = False
 
     def start(self) -> None:
@@ -53,6 +55,11 @@ class FakePresence:
             "idle_after_s": self.idle_after_s,
         }
 
+    def move_streak_s(self) -> float | None:
+        if self._move_streak_start is None:
+            return None
+        return max(0.0, time_mod.monotonic() - self._move_streak_start)
+
     # ---- test-only helpers (not part of the real Presence API) ----
 
     def set_active(self, active: bool) -> None:
@@ -62,11 +69,22 @@ class FakePresence:
         else:
             self._last_human_monotonic = time_mod.monotonic() - (self.idle_after_s + 3600)
 
-    def fire_human_input(self) -> None:
-        """Simulate a real human mouse/key event, including the on_human_input callback."""
+    def fire_human_input(self, kind: str | None = None) -> None:
+        """Simulate a real human mouse/key event, including the on_human_input callback.
+        `kind` mirrors the real Presence's move/scroll/click/key attribution (item 2); omit it
+        to keep the old click-equivalent (immediate takeover) behavior existing callers rely on.
+        """
         self._last_human_monotonic = time_mod.monotonic()
+        if kind in ("move", "scroll"):
+            if self._move_streak_start is None:
+                self._move_streak_start = time_mod.monotonic()
+        else:
+            self._move_streak_start = None
         if self.on_human_input:
-            self.on_human_input()
+            if kind is None:
+                self.on_human_input()
+            else:
+                self.on_human_input(kind)
 
 
 @pytest.fixture
@@ -237,7 +255,9 @@ def test_consent_window_skips_a_second_prompt(make_client, fake_presence):
 
 
 def test_human_takeover_revokes_lease_and_pauses(make_client, fake_presence):
-    with make_client(mode="hands_off", presence={"resume_after_s": 0.2}) as client:
+    with make_client(
+        mode="hands_off", presence={"resume_after_s": 0.2, "consent_grace_s": 0}
+    ) as client:
         hub = client.app.state.hub
         agent = register(client, "agent-a")
         lease_resp = client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
@@ -446,3 +466,311 @@ def test_hotkey_release_triggers_takeover(make_client, fake_presence):
         assert state["paused"] is True
         assert state["pause_reason"] == "human_took_the_mouse"
         assert state["lease"]["holder"] is None
+
+
+# ---------------------------------------------------------------------------
+# consent-to-stillness grace window (item 1)
+# ---------------------------------------------------------------------------
+
+
+def test_grace_suppresses_input_right_after_consent_allow(make_client, fake_presence):
+    with make_client(mode="ask", presence={"consent_grace_s": 0.3}) as client:
+        hub = client.app.state.hub
+        hub._presence.set_active(True)
+        agent = register(client, "agent-a")
+
+        first = client.post("/v1/lease", json={"wait_s": 0}, headers=auth_headers(agent["token"]))
+        request_id = first.json()["request_id"]
+        client.post(f"/v1/admin/consent/{request_id}", json={"decision": "allow"})
+
+        granted = client.post("/v1/lease", json={"wait_s": 0}, headers=auth_headers(agent["token"]))
+        assert granted.json()["status"] == "granted"
+
+        state = client.get("/v1/state").json()
+        assert state["human"]["takeover_armed"] is False
+        assert state["human"]["takeover_arms_at"] is not None
+
+        # The accept gesture itself (mouse off the Allow button etc.) bleeds in right away --
+        # it must not revoke the lease.
+        hub._presence.fire_human_input()
+        time_mod.sleep(0.05)
+        state2 = client.get("/v1/state").json()
+        assert state2["paused"] is False
+        assert state2["lease"]["holder"]["agent_id"] == agent["agent_id"]
+
+        # Human input after the grace window elapses still triggers takeover as today.
+        time_mod.sleep(0.35)
+        state3 = client.get("/v1/state").json()
+        assert state3["human"]["takeover_armed"] is True
+        hub._presence.fire_human_input()
+        time_mod.sleep(0.05)
+        state4 = client.get("/v1/state").json()
+        assert state4["paused"] is True
+        assert state4["pause_reason"] == "human_took_the_mouse"
+        assert state4["lease"]["holder"] is None
+
+
+def test_grace_applies_to_promptless_grant(make_client, fake_presence):
+    """hands_off mode grants without a consent prompt, but the human may still be at the
+    keyboard from typing the request -- grace must apply there too."""
+    with make_client(mode="hands_off", presence={"consent_grace_s": 0.3}) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+
+        granted = client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        assert granted.json()["status"] == "granted"
+
+        hub._presence.fire_human_input()
+        time_mod.sleep(0.05)
+        state = client.get("/v1/state").json()
+        assert state["paused"] is False
+        assert state["lease"]["holder"] is not None
+
+        time_mod.sleep(0.35)
+        hub._presence.fire_human_input()
+        time_mod.sleep(0.05)
+        state2 = client.get("/v1/state").json()
+        assert state2["paused"] is True
+        assert state2["lease"]["holder"] is None
+
+
+# ---------------------------------------------------------------------------
+# two-tier takeover (item 2)
+# ---------------------------------------------------------------------------
+
+
+def test_brief_mouse_move_pauses_but_keeps_lease(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 2.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["pause_reason"] == "human_took_the_mouse"
+        assert state["lease"]["holder"] is not None
+        assert state["lease"]["holder"]["agent_id"] == agent["agent_id"]
+
+        audit_rows = client.get("/v1/audit").json()
+        takeover_rows = [r for r in audit_rows if r["action"] == "human_takeover"]
+        assert takeover_rows
+        assert takeover_rows[-1]["input"]["tier"] == "pause"
+
+
+def test_scroll_only_pauses_but_keeps_lease(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 2.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("scroll")
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is not None
+
+
+def test_repeated_moves_in_pause_tier_record_one_takeover(make_client, fake_presence):
+    """While paused with the lease intact, further move events are not new takeovers: one
+    audit row and one overlay flash, not one per mouse event."""
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 2.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        for _ in range(25):
+            hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is not None
+
+        audit_rows = client.get("/v1/audit").json()
+        takeover_rows = [r for r in audit_rows if r["action"] == "human_takeover"]
+        assert len(takeover_rows) == 1
+        assert takeover_rows[0]["input"]["tier"] == "pause"
+
+
+def test_click_revokes_immediately_even_if_brief(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 2.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("click")
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is None
+
+        audit_rows = client.get("/v1/audit").json()
+        takeover_rows = [r for r in audit_rows if r["action"] == "human_takeover"]
+        assert takeover_rows[-1]["input"]["tier"] == "revoke"
+
+
+def test_key_press_revokes_immediately(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 2.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("key")
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is None
+
+
+def test_sustained_movement_escalates_pause_to_revoke(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 0.2}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is not None  # still tier=pause, lease kept
+
+        # movement continues past revoke_after_s -- next event escalates to a full revoke
+        time_mod.sleep(0.2)
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+        state2 = client.get("/v1/state").json()
+        assert state2["paused"] is True
+        assert state2["lease"]["holder"] is None
+
+        audit_rows = client.get("/v1/audit").json()  # newest first
+        tiers = [r["input"]["tier"] for r in audit_rows if r["action"] == "human_takeover"]
+        assert tiers[0] == "revoke"
+        assert tiers[-1] == "pause"
+
+
+def test_explicit_release_always_revokes_even_during_brief_move(make_client, fake_presence):
+    with make_client(mode="hands_off", presence={"consent_grace_s": 0}) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub.human_release()
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is None
+
+
+# ---------------------------------------------------------------------------
+# wait_s long-polls a takeover pause instead of hard-erroring (item 3)
+# ---------------------------------------------------------------------------
+
+
+def test_wait_s_runs_the_action_once_resumed_mid_wait(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 5.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        # A brief mouse move -- tier=pause, keeps the lease, pauses automatically.
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+        assert client.get("/v1/state").json()["paused"] is True
+
+        def _resume_later() -> None:
+            time_mod.sleep(0.2)
+            hub._loop.call_soon_threadsafe(hub.resume)
+
+        threading.Thread(target=_resume_later, daemon=True).start()
+
+        start = time_mod.monotonic()
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "a", "wait_s": 3},
+            headers=auth_headers(agent["token"]),
+        )
+        elapsed = time_mod.monotonic() - start
+        assert resp.status_code == 200
+        assert elapsed < 3  # returned once resumed, not after the full wait_s
+
+
+def test_manual_pause_returns_423_immediately_even_with_wait_s(make_client, fake_presence):
+    with make_client(mode="hands_off") as client:
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        client.post("/v1/admin/pause", json={"reason": "manual"})
+
+        start = time_mod.monotonic()
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "a", "wait_s": 5},
+            headers=auth_headers(agent["token"]),
+        )
+        elapsed = time_mod.monotonic() - start
+        assert resp.status_code == 423
+        assert elapsed < 1.0
+
+
+def test_wait_s_times_out_with_waited_seconds_in_detail(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 5.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "a", "wait_s": 1},
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 423
+        body = resp.json()
+        assert "human_took_the_mouse" in body["detail"]
+        assert "waited" in body["detail"]
+        assert "still active" in body["detail"]
+
+
+def test_wait_s_zero_returns_423_immediately(make_client, fake_presence):
+    with make_client(
+        mode="hands_off", presence={"consent_grace_s": 0, "revoke_after_s": 5.0}
+    ) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_human_input("move")
+        time_mod.sleep(0.05)
+
+        start = time_mod.monotonic()
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "a", "wait_s": 0},
+            headers=auth_headers(agent["token"]),
+        )
+        elapsed = time_mod.monotonic() - start
+        assert resp.status_code == 423
+        assert elapsed < 0.3

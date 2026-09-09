@@ -214,6 +214,52 @@ def test_scroll_bad_direction_rejected():
     assert ei.value.code == "invalid_action"
 
 
+# --- scroll_pages -------------------------------------------------------------
+
+
+def test_scroll_pages_without_coordinate_only_presses_keys(rec):
+    actions.run_action({"action": "scroll_pages", "scroll_direction": "down", "scroll_amount": 3})
+    assert [c[0] for c in rec.calls] == ["press_key"]
+    name, args, kwargs = rec.calls[0]
+    assert args[0] == ["pagedown"]
+    assert kwargs["repeat"] == 3
+
+
+def test_scroll_pages_with_coordinate_clicks_then_presses_keys(rec):
+    actions.run_action(
+        {
+            "action": "scroll_pages",
+            "scroll_direction": "up",
+            "scroll_amount": 2,
+            "coordinate": [715, 402],
+        }
+    )
+    assert [c[0] for c in rec.calls] == ["click", "press_key"]
+    _name, args, _kwargs = rec.calls[0]
+    ax, ay = args
+    assert abs(ax - 1280) <= 1 and abs(ay - 720) <= 1
+    name, args, kwargs = rec.calls[1]
+    assert args[0] == ["pageup"]
+    assert kwargs["repeat"] == 2
+
+
+def test_scroll_pages_bad_direction_rejected():
+    with pytest.raises(actions.ActionError) as ei:
+        actions.run_action(
+            {"action": "scroll_pages", "scroll_direction": "sideways", "scroll_amount": 1}
+        )
+    assert ei.value.code == "invalid_action"
+
+
+def test_scroll_pages_amount_bounds():
+    with pytest.raises(actions.ActionError):
+        actions.run_action({"action": "scroll_pages", "scroll_direction": "up", "scroll_amount": 0})
+    with pytest.raises(actions.ActionError):
+        actions.run_action(
+            {"action": "scroll_pages", "scroll_direction": "up", "scroll_amount": 51}
+        )
+
+
 # --- wait ----------------------------------------------------------------------
 
 
@@ -395,11 +441,14 @@ def test_read_only_set_matches_spec():
             "list_windows",
             "get_clipboard",
             "wait",
+            "ui_tree",
+            "find",
         }
     )
     for name in actions.READ_ONLY_ACTIONS:
         assert actions.is_read_only(name)
     assert not actions.is_read_only("left_click")
+    assert not actions.is_read_only("click_element")
 
 
 def test_all_actions_covers_every_table_entry():
@@ -417,6 +466,7 @@ def test_all_actions_covers_every_table_entry():
         "left_mouse_up",
         "cursor_position",
         "scroll",
+        "scroll_pages",
         "type",
         "key",
         "hold_key",
@@ -426,6 +476,9 @@ def test_all_actions_covers_every_table_entry():
         "get_clipboard",
         "set_clipboard",
         "launch",
+        "ui_tree",
+        "find",
+        "click_element",
     }
     assert actions.ALL_ACTIONS == frozenset(expected)
 

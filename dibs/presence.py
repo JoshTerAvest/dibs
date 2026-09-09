@@ -28,11 +28,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _HUMAN_CALLBACK_DEBOUNCE_S = 0.1
+
+# A gap this long between move/scroll events starts a new "continuous activity" streak instead
+# of extending the old one (two-tier takeover, item 2).
+_MOVE_STREAK_RESET_GAP_S = 1.0
 
 # Canonical modifier name -> the pynput Key.* names that count as "that modifier". Right-side
 # variants (ctrl_r, alt_r/alt_gr, shift_r) and the bare `ctrl`/`alt`/`shift` some backends report
@@ -47,7 +52,7 @@ _CHORD_MODIFIERS: dict[str, frozenset[str]] = {
 
 class Presence:
     def __init__(
-        self, idle_after_s: float, on_human_input: Callable[[], None] | None = None
+        self, idle_after_s: float, on_human_input: Callable[..., None] | None = None
     ) -> None:
         self.idle_after_s = idle_after_s
         self.on_human_input = on_human_input
@@ -57,6 +62,9 @@ class Presence:
         self._last_callback_monotonic: float = 0.0
         self._agent_deadline: float = 0.0
         self._mod_down: dict[str, int] = {name: 0 for name in _CHORD_MODIFIERS}
+        # Two-tier takeover (SPEC item 2): tracks how long move/scroll input has been continuous
+        # so the hub can tell a brief nudge from sustained movement.
+        self._move_streak_start: float | None = None
 
         self._mouse_listener: Any = None
         self._keyboard_listener: Any = None
@@ -118,6 +126,15 @@ class Presence:
         seconds = self.seconds_since_human()
         return seconds is not None and seconds < self.idle_after_s
 
+    def move_streak_s(self) -> float | None:
+        """How long move/scroll-only human input has been continuous, or None if there is no
+        active streak right now (SPEC item 2)."""
+        with self._lock:
+            start = self._move_streak_start
+        if start is None:
+            return None
+        return max(0.0, time.monotonic() - start)
+
     def snapshot(self) -> dict:
         return {
             "active": self.human_active(),
@@ -133,17 +150,33 @@ class Presence:
         with self._lock:
             return time.monotonic() < self._agent_deadline
 
-    def _register_human(self) -> None:
+    def _register_human(self, kind: str = "click") -> None:
         now = time.monotonic()
         fire = False
         with self._lock:
+            prior = self._last_human_monotonic
+            if kind in ("move", "scroll"):
+                if self._move_streak_start is None or (
+                    prior is not None and now - prior > _MOVE_STREAK_RESET_GAP_S
+                ):
+                    self._move_streak_start = now
+            else:
+                # A click or key press is a deliberate, immediate signal -- it doesn't belong to
+                # (and shouldn't extend) a movement streak.
+                self._move_streak_start = None
             self._last_human_monotonic = now
             if now - self._last_callback_monotonic >= _HUMAN_CALLBACK_DEBOUNCE_S:
                 self._last_callback_monotonic = now
                 fire = True
         if fire and self.on_human_input is not None:
             try:
-                self.on_human_input()
+                self.on_human_input(kind)
+            except TypeError:
+                # Back-compat with callables that don't accept a `kind` argument.
+                try:
+                    self.on_human_input()
+                except Exception:
+                    logger.exception("Presence.on_human_input callback raised")
             except Exception:
                 logger.exception("Presence.on_human_input callback raised")
 
@@ -180,17 +213,17 @@ class Presence:
     def _on_move(self, x: int, y: int, injected: bool = False) -> None:
         if self._is_agent_generated(injected):
             return
-        self._register_human()
+        self._register_human("move")
 
     def _on_click(self, x: int, y: int, button: Any, pressed: bool, injected: bool = False) -> None:
         if self._is_agent_generated(injected):
             return
-        self._register_human()
+        self._register_human("click")
 
     def _on_scroll(self, x: int, y: int, dx: int, dy: int, injected: bool = False) -> None:
         if self._is_agent_generated(injected):
             return
-        self._register_human()
+        self._register_human("scroll")
 
     # ---- keyboard callbacks -- pynput Win32: on_press(key, injected), on_release(key, injected) ----
 
@@ -205,7 +238,7 @@ class Presence:
         if self._chord_active():
             # ctrl+alt+shift+<key> -- one of our own hotkeys (or shaped exactly like one).
             return
-        self._register_human()
+        self._register_human("key")
 
     def _on_release(self, key: Any, injected: bool = False) -> None:
         was_chord = self._chord_active()
@@ -216,4 +249,4 @@ class Presence:
             return
         if was_chord:
             return
-        self._register_human()
+        self._register_human("key")

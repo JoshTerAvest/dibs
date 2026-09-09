@@ -236,6 +236,84 @@ async def test_list_tools_screenshot_and_click(running_server):
             assert "OK" in text
 
 
+async def test_ui_tree_find_click_element_tools_registered_and_dispatch(running_server):
+    base_url, fake = running_server
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            tools = await session.list_tools()
+            names = {t.name for t in tools.tools}
+            assert {"ui_tree", "find", "click_element"} <= names
+
+            await session.call_tool("ui_tree", {"hwnd": 1, "max_depth": 3})
+            assert fake.calls[-1] == {"action": "ui_tree", "hwnd": 1, "max_depth": 3}
+
+            await session.call_tool("find", {"text": "Seven", "near": "Display"})
+            assert fake.calls[-1] == {"action": "find", "text": "Seven", "near": "Display"}
+
+            result = await session.call_tool(
+                "click_element", {"text": "Seven", "button": "right", "double": True}
+            )
+            assert not result.isError
+            assert fake.calls[-1] == {
+                "action": "click_element",
+                "text": "Seven",
+                "button": "right",
+                "double": True,
+            }
+
+
+async def test_computer_screenshot_after_appends_image(running_server):
+    base_url, fake = running_server
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2], "screenshot_after": True}
+            )
+            assert not result.isError
+            image_blocks = [b for b in result.content if b.type == "image"]
+            assert len(image_blocks) == 1
+            assert image_blocks[0].mimeType == "image/png"
+            text = "".join(b.text for b in result.content if b.type == "text")
+            assert "OK" in text
+            # both the click and the trailing screenshot went through the hub, in order
+            assert [c["action"] for c in fake.calls] == ["left_click", "screenshot"]
+
+
+async def test_computer_without_screenshot_after_has_no_image(running_server):
+    base_url, _fake = running_server
+    url = f"{base_url}/mcp"
+
+    async with streamablehttp_client(url, headers={"Authorization": "Bearer t"}) as (
+        read,
+        write,
+        _get_id,
+    ):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            result = await session.call_tool(
+                "computer", {"action": "left_click", "coordinate": [1, 2]}
+            )
+            assert not result.isError
+            assert not [b for b in result.content if b.type == "image"]
+
+
 async def test_lease_required_error_names_holder(running_server):
     base_url, fake = running_server
     url = f"{base_url}/mcp"

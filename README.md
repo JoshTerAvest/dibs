@@ -20,7 +20,7 @@ uv sync
 ```
 
 That creates `.venv` and installs everything (FastAPI, uvicorn, mss, pyautogui, pywin32,
-pynput, the mcp SDK, httpx). No extra dependencies to add yourself.
+pynput, the mcp SDK, httpx, uiautomation). No extra dependencies to add yourself.
 
 ## Run
 
@@ -36,6 +36,16 @@ For it to start automatically at Windows logon:
 ```powershell
 .\scripts\install-task.ps1
 ```
+
+To have it restarted automatically if it ever stops answering (the task only restarts on a
+crash it can see):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-watchdog.ps1
+```
+
+That registers `dibs-watchdog`, which hits the unauthenticated `GET /healthz` every 5 minutes
+and starts the `dibs` task when it fails. `scripts\uninstall-task.ps1` removes both tasks.
 
 > On this machine `Register-ScheduledTask` needs an elevated shell (UAC-filtered admin token): open Windows Terminal **as administrator** and run the installer from there. The task itself runs unelevated as your interactive user. The installer stops any hand-started `dibs serve` first so the task can take port 7474.
 
@@ -104,10 +114,37 @@ curl -s -X POST http://127.0.0.1:7474/v1/actions \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"action":"type","text":"hello"}'
 
+# scroll_pages -- more reliable than `scroll` against pages/apps that smooth-scroll (Chrome
+# can collapse a burst of wheel events into a much smaller move than requested); clicks
+# coordinate first if given, then sends Page_Up/Page_Down `scroll_amount` times
+curl -s -X POST http://127.0.0.1:7474/v1/actions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"action":"scroll_pages","scroll_direction":"down","scroll_amount":2,"coordinate":[900,700]}'
+
 # batch (stops at first failure)
 curl -s -X POST http://127.0.0.1:7474/v1/actions/batch \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"actions":[{"action":"left_click","coordinate":[400,300]},{"action":"type","text":"hi"}],"auto_lease":true}'
+
+# find + click a labeled element instead of guessing pixel coordinates
+curl -s -X POST http://127.0.0.1:7474/v1/actions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"action":"find","text":"Add to cart","near":"Blue Widget"}'
+curl -s -X POST http://127.0.0.1:7474/v1/actions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"action":"click_element","text":"Add to cart","near":"Blue Widget"}'
+
+# screenshot_after: opt in on any single action or batch to get a screenshot back with the
+# result, taken right after the action ran (or after the last successful action of a batch,
+# even one that stopped early on error) -- same shape as the `screenshot` action's own image
+curl -s -X POST http://127.0.0.1:7474/v1/actions \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"action":"key","text":"Return","screenshot_after":true}'
+# -> {"ok":true,"result":"OK","screenshot":{"png_base64":"...","width":...,"height":...,"scale":...,"screen":0}}
+curl -s -X POST http://127.0.0.1:7474/v1/actions/batch \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"actions":[{"action":"left_click","coordinate":[400,300]}],"auto_lease":true,"screenshot_after":true}'
+# -> {"results":[...],"screenshot":{...}}
 ```
 
 `POST /v1/lease` responds one of four ways depending on mode and who's around:
@@ -125,11 +162,41 @@ claude mcp add --transport http dibs http://127.0.0.1:7474/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-Exposes six tools: `computer` (one tool, `action` param selects the behavior — mirrors
-Anthropic's `computer_toolset_20260801`), `desk_status`, `acquire_desk`, `release_desk`,
-`list_windows`, `focus_window`. `computer` always auto-leases, and a denial comes back as
-a tool error naming the holder, the consent countdown, or when it'll auto-resume — so the
-model can decide whether to wait or back off.
+Exposes nine tools: `computer` (one tool, `action` param selects the behavior — mirrors
+Anthropic's `computer_toolset_20260801`, plus dibs extras), `desk_status`, `acquire_desk`,
+`release_desk`, `list_windows`, `focus_window`, `ui_tree`, `find`, `click_element`.
+`computer` always auto-leases, and a denial comes back as a tool error naming the holder,
+the consent countdown, or when it'll auto-resume — so the model can decide whether to wait
+or back off.
+
+### UI Automation: `ui_tree` / `find` / `click_element`
+
+Reading a full-screen screenshot and guessing pixel coordinates is expensive and fragile —
+a scrolled page can move the target out from under a hard-coded click. These three actions
+read the real Windows UI Automation tree instead, so an agent can say "click the element
+named 'Add to cart' nearest to 'Blue Widget'" and get it right even after a scroll:
+
+- `ui_tree(hwnd?, title?, max_depth?=6, max_nodes?=400, roles?)` — a compact indented text
+  tree plus structured nodes (`{id, role, name, value?, rect, rect_shot, depth, enabled,
+  offscreen}`). `rect` is absolute screen pixels; `rect_shot` is screenshot-space pixels
+  (the same coordinate system `screenshot`/`zoom`/clicks use), so a returned rect can be
+  clicked directly.
+- `find(text, role?, near?, hwnd?, title?, exact?)` — case-insensitive substring match on
+  name/value, optional role filter, `near` picks the match closest to a named landmark when
+  several elements share a name. Returns the best match plus up to 5 alternates
+  (`center`/`center_shot` included), or a `not_found` error listing nearby element names.
+- `click_element(text, role?, near?, hwnd?, title?, exact?, button?, double?)` — `find`, then
+  click the centre. Goes through the same click path as `left_click`, so motion, the overlay
+  flash, and the audit log all work the same way.
+
+Window resolution for all three: `hwnd` if given, else a case-insensitive substring of
+`title`, else the current foreground window.
+
+**Chromium/Electron apps** (Chrome, VS Code, Slack, the Edge WebView...) only publish their
+accessibility tree once an assistive-tech client connects. `uiautomation` usually triggers
+that on the first query, but sometimes only a beat later — dibs retries a couple of times
+with a short pause before giving up. If a Chromium-based app still comes back nearly empty,
+launch it with `--force-renderer-accessibility` to force the tree on from startup.
 
 ## Use it — Python client
 
@@ -238,6 +305,8 @@ settable via env var `DIBS_<KEY>` (`__` for nesting, e.g.
 | `presence.consent_timeout_s` | `60` | how long an unanswered consent request stays pending |
 | `presence.consent_grant_s` | `300` | how long a granted consent window lasts before asking again |
 | `presence.deny_cooldown_s` | `120` | how long a denied agent gets an automatic no |
+| `presence.consent_grace_s` | `3.0` | after a consent grant (or a promptless grant), how long human input is ignored so accepting the prompt doesn't itself trigger a takeover |
+| `presence.revoke_after_s` | `2.0` | how long continuous mouse movement/scroll can run before it escalates from a pause (lease kept) to a full revoke |
 | `overlay.enabled` | `true` | show the cursor halo / banner / consent prompt |
 | `overlay.halo_color` | `#00e5ff` | cursor halo color |
 | `overlay.banner` | `true` | show the top banner strip |
@@ -277,6 +346,21 @@ npm install                   # install JS dependencies
 npm run lint                  # lint dashboard JS
 npm run format                # format dashboard files
 ```
+
+### E2E tests
+
+`tests/test_browser_e2e.py` (marked `display`) drives a real, Playwright-launched Chromium
+window through the dibs hub in-process, against the real desktop -- proving that dibs coordinate
+math (screenshot-space -> absolute pixels, accounting for OS DPI scaling and dibs' own
+screenshot downscale) actually lands clicks/scrolls where a real screenshot-driven agent would
+compute them to go, not just that the internal call chain runs. It never touches the live
+`:7474` server or the user's own windows -- only its own throwaway Chromium instance.
+
+Setup (once): `uv run playwright install chromium`
+
+Run: `uv run pytest -q -m display tests/test_browser_e2e.py`
+
+Auto-skips if playwright or its Chromium browser isn't installed, or if not on Windows.
 
 ## Contributing
 

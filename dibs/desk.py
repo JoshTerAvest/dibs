@@ -241,6 +241,14 @@ _SNAP_DURATION_S = 0.02
 _CLICK_SETTLE_RANGE_S = (0.04, 0.09)
 _DRAG_DURATION_RANGE_S = (0.25, 0.6)
 
+# Real failure 2026-09-09: a burst of wheel events sent in one pyautogui.scroll()/hscroll()
+# call gets collapsed by Chrome's smooth-scrolling under a single small scroll instead of being
+# applied click-by-click (10 requested clicks moved the page ~30px; `key Page_Down` worked fine).
+# Fixing it means emitting exactly one wheel event per requested click, with a short real-time
+# gap between them so Chrome's smoothing sees them as discrete notches. 15ms is comfortably above
+# input-coalescing window on Windows while staying fast for large scroll_amounts.
+SCROLL_CLICK_DELAY_S = 0.015
+
 
 def configure_motion(enabled: bool = True, speed: float = 1.0) -> None:
     """Module-level motion settings, set once at hub startup from `settings.motion`."""
@@ -454,6 +462,9 @@ def mouse_up(button: str = "left") -> None:
     pyautogui.mouseUp(button=button)
 
 
+_WHEEL_DELTA = 120  # Windows' one-notch wheel unit (WHEEL_DELTA); see scroll()'s docstring.
+
+
 @_guard
 def scroll(
     direction: str,
@@ -463,9 +474,26 @@ def scroll(
     *,
     modifiers: list[str] | None = None,
 ) -> None:
-    """direction in {up,down,left,right}; amount in wheel clicks. When a coordinate is given
-    and motion is enabled, travels there along a human-like path first (SPEC-v0.3 §2)."""
+    """direction in {up,down,left,right}; amount in wheel clicks. The cursor is moved to
+    (x, y) first (whether or not the human-like motion layer is enabled) -- on Windows,
+    mouse_event(MOUSEEVENTF_WHEEL) delivers the wheel event to the window under the cursor, so
+    positioning it is all that's needed to target a specific window/pane; no extra focus step.
+
+    Sends one wheel event per requested click, `SCROLL_CLICK_DELAY_S` apart, instead of one
+    event carrying the whole amount -- Chrome (and other apps with smooth-scrolling) can
+    collapse a burst of wheel deltas delivered in a single call into one small scroll instead of
+    `amount` discrete notches (see the module-level comment by SCROLL_CLICK_DELAY_S).
+
+    Deliberately calls `win32api.mouse_event` directly instead of `pyautogui.scroll()`/
+    `hscroll()`: those pass the `clicks` count straight through as `mouse_event`'s `dwData`
+    (verified against pyautogui's `_pyautogui_win._scroll`), but Windows expects `dwData` in
+    units of `WHEEL_DELTA` (120) per notch -- one real mouse click is dwData=120, not dwData=1.
+    Passing raw click counts (dwData=1) makes Windows treat each event as roughly 1/120th of a
+    notch, which is indistinguishable from the original bug this function fixes (a burst that
+    collapses into a barely-visible scroll) even after splitting into per-click calls."""
     set_dpi_aware()
+    if direction not in ("up", "down", "left", "right"):
+        raise DeskError(f"unknown scroll direction: {direction!r}")
     modifiers = modifiers or []
     held: list[str] = []
     try:
@@ -477,16 +505,13 @@ def scroll(
                 _move_human_like(x, y)
             else:
                 pyautogui.moveTo(x, y)
-        if direction == "up":
-            pyautogui.scroll(amount)
-        elif direction == "down":
-            pyautogui.scroll(-amount)
-        elif direction == "left":
-            pyautogui.hscroll(-amount)
-        elif direction == "right":
-            pyautogui.hscroll(amount)
-        else:
-            raise DeskError(f"unknown scroll direction: {direction!r}")
+        horizontal = direction in ("left", "right")
+        event_flag = win32con.MOUSEEVENTF_HWHEEL if horizontal else win32con.MOUSEEVENTF_WHEEL
+        step = -_WHEEL_DELTA if direction in ("down", "left") else _WHEEL_DELTA
+        for i in range(amount):
+            win32api.mouse_event(event_flag, 0, 0, step, 0)
+            if i < amount - 1:
+                time.sleep(SCROLL_CLICK_DELAY_S)
     finally:
         for m in reversed(held):
             pyautogui.keyUp(m)

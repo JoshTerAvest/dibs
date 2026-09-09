@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-
-from . import actions
-
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -17,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from . import actions
 from .config import Settings
 from .hub import AgentInfo, Hub, HubError
 
@@ -61,12 +59,15 @@ class ActionBody(BaseModel):
     action: str
     auto_lease: bool = False
     wait_s: int | None = None
+    screenshot_after: bool = False
 
 
 class BatchBody(BaseModel):
     actions: list[dict[str, Any]]
     auto_lease: bool = False
     wait_s: int | None = None
+    screenshot_after: bool = False
+    screen: int | None = None
 
 
 class PauseBody(BaseModel):
@@ -82,11 +83,30 @@ class ConsentDecisionBody(BaseModel):
 
 
 def _strip_dispatch_fields(body: ActionBody) -> dict[str, Any]:
-    """The action dict actually dispatched: the raw body minus auto_lease/wait_s."""
+    """The action dict actually dispatched: the raw body minus auto_lease/wait_s/screenshot_after."""
     data = body.model_dump()
     data.pop("auto_lease", None)
     data.pop("wait_s", None)
+    data.pop("screenshot_after", None)
     return data
+
+
+async def _capture_screenshot_after(
+    hub: Hub, agent: AgentInfo, screen: int | None
+) -> dict[str, Any]:
+    """Run a plain `screenshot` action through the hub (same lease gating as any other action --
+    the caller already holds the lease by the time this runs -- and audited as a normal
+    screenshot capture) and return its `image` dict, or an error dict if it couldn't be taken."""
+    shot_action: dict[str, Any] = {"action": "screenshot"}
+    if screen is not None:
+        shot_action["screen"] = screen
+    try:
+        shot_result = await hub.run(agent, shot_action)
+    except HubError as e:
+        body: dict[str, Any] = {"ok": False, "error": e.code, "detail": e.detail}
+        body.update(e.payload)
+        return body
+    return shot_result.to_dict().get("image")
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -220,6 +240,15 @@ def create_app(settings: Settings) -> FastAPI:
         hub.revoke(agent_id)
         return Response(status_code=204)
 
+    # ---- health (unauthenticated, loopback-bound; used by scripts/watchdog.ps1) ----
+
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz(request: Request):
+        """Liveness only: no state, no agents, no screen. The server binds 127.0.0.1 by
+        default, and this reveals nothing beyond 'a dibs is up', so it needs no token."""
+        hub: Hub = get_hub(request)
+        return {"ok": True, "version": hub.state()["version"], "uptime_s": hub.state()["uptime_s"]}
+
     # ---- state / display ----
 
     @app.get("/v1/state")
@@ -267,7 +296,10 @@ def create_app(settings: Settings) -> FastAPI:
         hub: Hub = get_hub(request)
         action = _strip_dispatch_fields(body)
         result = await hub.run(agent, action, auto_lease=body.auto_lease, wait_s=body.wait_s)
-        return result.to_dict()
+        out = result.to_dict()
+        if body.screenshot_after:
+            out["screenshot"] = await _capture_screenshot_after(hub, agent, action.get("screen"))
+        return out
 
     @app.post("/v1/actions/batch")
     async def post_actions_batch(
@@ -277,7 +309,12 @@ def create_app(settings: Settings) -> FastAPI:
         results = await hub.run_batch(
             agent, body.actions, auto_lease=body.auto_lease, wait_s=body.wait_s
         )
-        return {"results": results}
+        out: dict[str, Any] = {"results": results}
+        if body.screenshot_after:
+            # Capture after the last successful action -- also when the batch stopped early on
+            # error, so the caller can see the screen state the failure left behind.
+            out["screenshot"] = await _capture_screenshot_after(hub, agent, body.screen)
+        return out
 
     # ---- screenshot / audit ----
 

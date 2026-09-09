@@ -16,6 +16,8 @@ class PresenceConfig(BaseModel):
     consent_timeout_s: float = 60
     consent_grant_s: float = 300
     deny_cooldown_s: float = 120
+    consent_grace_s: float = 3.0
+    revoke_after_s: float = 2.0
 
 
 class OverlayConfig(BaseModel):
@@ -102,7 +104,7 @@ def load_settings(path: str | None = None) -> Settings:
 
     data: dict[str, Any] = {}
     if config_path and os.path.isfile(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             loaded = yaml.safe_load(f)
         if loaded:
             if not isinstance(loaded, dict):

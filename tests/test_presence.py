@@ -153,3 +153,47 @@ def test_partial_chord_key_still_counts_as_human():
 def test_stop_without_start_does_not_raise_or_hang():
     p = Presence(idle_after_s=1)
     p.stop()  # must be a safe no-op
+
+
+# ---------------------------------------------------------------------------
+# two-tier takeover: move/scroll streak tracking + kind attribution (item 2)
+# ---------------------------------------------------------------------------
+
+
+def test_on_human_input_receives_kind():
+    kinds = []
+    p = Presence(idle_after_s=5, on_human_input=lambda kind: kinds.append(kind))
+    p._on_move(1, 2, injected=False)
+    time.sleep(0.15)  # clear the debounce window between each
+    p._on_scroll(1, 2, 0, 1, injected=False)
+    time.sleep(0.15)
+    p._on_click(1, 2, "left", True, injected=False)
+    time.sleep(0.15)
+    p._on_press(_FakeKey(char="a"), injected=False)
+    assert kinds == ["move", "scroll", "click", "key"]
+
+
+def test_move_streak_tracks_continuous_movement():
+    p = Presence(idle_after_s=5)
+    assert p.move_streak_s() is None
+    p._on_move(1, 2, injected=False)
+    s = p.move_streak_s()
+    assert s is not None and s < 0.1
+
+
+def test_move_streak_resets_after_a_click():
+    p = Presence(idle_after_s=5)
+    p._on_move(1, 2, injected=False)
+    assert p.move_streak_s() is not None
+    p._on_click(1, 2, "left", True, injected=False)
+    assert p.move_streak_s() is None
+
+
+def test_move_streak_resets_after_a_gap():
+    p = Presence(idle_after_s=5)
+    p._on_move(1, 2, injected=False)
+    first_start = p._move_streak_start
+    time.sleep(1.2)  # past _MOVE_STREAK_RESET_GAP_S
+    p._on_move(3, 4, injected=False)
+    assert p._move_streak_start != first_start
+    assert p.move_streak_s() < 0.1

@@ -12,7 +12,6 @@ import time
 
 from tests.conftest import auth_headers, register
 
-
 # ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
@@ -393,6 +392,107 @@ def test_batch_stops_at_first_failure(make_client):
         }
 
 
+def test_screenshot_after_on_single_action(make_client):
+    with make_client() as client:
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "Return", "screenshot_after": True},
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["result"] == "OK"
+        assert "screenshot" in body
+        assert body["screenshot"]["png_base64"]
+        assert "height" in body["screenshot"] and "scale" in body["screenshot"]
+
+        # is recorded as its own audit row, same as any other screenshot capture
+        audit = client.get("/v1/audit").json()
+        actions_seen = [row["action"] for row in audit]
+        assert actions_seen[0] == "screenshot"
+        assert actions_seen[1] == "key"
+
+
+def test_screenshot_after_omitted_by_default(make_client):
+    with make_client() as client:
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        resp = client.post(
+            "/v1/actions",
+            json={"action": "key", "text": "Return"},
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 200
+        assert "screenshot" not in resp.json()
+
+
+def test_screenshot_after_on_batch_success(make_client):
+    with make_client() as client:
+        agent = register(client, "agent-a")
+        resp = client.post(
+            "/v1/actions/batch",
+            json={
+                "actions": [{"action": "wait", "duration": 0}, {"action": "key", "text": "a"}],
+                "auto_lease": True,
+                "screenshot_after": True,
+            },
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["results"]) == 2
+        assert all(r["ok"] for r in body["results"])
+        assert body["screenshot"]["png_base64"]
+
+
+def test_screenshot_after_on_batch_stopped_early(make_client):
+    """screenshot_after still fires after a batch that failed partway through -- it captures
+    whatever state the failure left the screen in."""
+    with make_client() as client:
+        agent = register(client, "agent-a")
+        resp = client.post(
+            "/v1/actions/batch",
+            json={
+                "actions": [{"action": "key", "text": "a"}, {"action": "not_a_real_action"}],
+                "auto_lease": True,
+                "screenshot_after": True,
+            },
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["results"][0]["ok"] is True  # acquired the lease via auto_lease
+        assert body["results"][1]["ok"] is False
+        # the lease from the first (successful, gated) action is still held, so the trailing
+        # screenshot capture succeeds even though the batch itself stopped on an error
+        assert body["screenshot"]["png_base64"]
+
+
+def test_screenshot_after_on_batch_reports_error_when_lease_unavailable(make_client):
+    """If nothing in the batch ever acquired the lease (e.g. only free actions ran before the
+    failure), the trailing screenshot capture can't happen either -- it comes back as an error
+    dict instead of silently omitting the field or failing the whole response."""
+    with make_client() as client:
+        agent = register(client, "agent-a")
+        resp = client.post(
+            "/v1/actions/batch",
+            json={
+                "actions": [{"action": "wait", "duration": 0}, {"action": "not_a_real_action"}],
+                "auto_lease": True,
+                "screenshot_after": True,
+            },
+            headers=auth_headers(agent["token"]),
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["results"][1]["ok"] is False
+        assert body["screenshot"]["ok"] is False
+        assert body["screenshot"]["error"] == "lease_required"
+
+
 def test_batch_all_succeed(make_client):
     with make_client() as client:
         agent = register(client, "agent-a")
@@ -502,7 +602,13 @@ def test_state_shape(make_client):
         for key in ("host", "port", "allow_launch", "mode", "overlay"):
             assert key in state["config"]
         assert state["mode"] in ("ask", "hands_off", "locked")
-        assert set(state["human"].keys()) == {"active", "last_input_ago_s", "idle_after_s"}
+        assert set(state["human"].keys()) == {
+            "active",
+            "last_input_ago_s",
+            "idle_after_s",
+            "takeover_armed",
+            "takeover_arms_at",
+        }
         assert set(state["consent"].keys()) == {"pending", "windows", "recent"}
         assert state["consent"]["pending"] is None
 
@@ -545,3 +651,19 @@ def test_admin_shutdown_needs_hook_and_calls_it(make_client):
         hub.request_shutdown = lambda: calls.append(1)
         resp = client.post("/v1/admin/shutdown")
         assert resp.status_code == 200 and resp.json()["stopping"] is True
+
+
+# ---------------------------------------------------------------------------
+# health
+# ---------------------------------------------------------------------------
+
+
+def test_healthz_is_unauthenticated_and_minimal(make_client):
+    with make_client(
+        allow_local_open_registration=False, dashboard_open_on_loopback=False
+    ) as client:
+        resp = client.get("/healthz")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert set(body) == {"ok", "version", "uptime_s"}  # nothing an outsider could use

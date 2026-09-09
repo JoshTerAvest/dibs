@@ -48,7 +48,7 @@ import asyncio
 import contextlib
 import contextvars
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Image
@@ -79,10 +79,20 @@ COMPUTER_DESCRIPTION = """Control the shared Windows desktop: screenshots, mouse
 windows, clipboard. One tool, `action` selects the behaviour — mirrors Anthropic's \
 computer_toolset_20260801 action set plus a few dibs extras.
 
+`screenshot_after=true` (default false) captures a screenshot of the affected screen right after \
+the action runs and appends it to this call's result, exactly like `screenshot`'s own image -- \
+handy for confirming an action's effect without a separate round trip.
+
 All `coordinate` / `start_coordinate` / `region` values are ints in SCREENSHOT-SPACE pixels of \
 the target screen (i.e. the coordinate system of the image you last saw from `screenshot` or \
 `zoom` on that screen, not real desktop pixels — dibs maps the scaling for you). `screen?` \
 selects a monitor by index (default: the server's configured primary).
+
+Prefer the dedicated `find` / `click_element` tools (or this tool's ui_tree/find/click_element \
+actions) over screenshot+coordinate guessing whenever the target has a visible label or \
+accessible name — they read the real UI Automation tree, so they survive scrolling/resizing \
+that would move a hard-coded pixel coordinate off target, and cost far fewer tokens than a \
+full screenshot per step.
 
 Observation actions (they do NOT change the screen, but they still need dibs: the human decides who may look at their screen):
   screenshot(screen?) -> image
@@ -100,12 +110,23 @@ Input actions (auto-acquire the exclusive desk lease; may wait/fail if another a
   mouse_move(coordinate)
   left_mouse_down() / left_mouse_up()
   scroll(scroll_direction="up"|"down"|"left"|"right", scroll_amount=1..50, coordinate?, text?)
+  scroll_pages(scroll_direction="up"|"down", scroll_amount=1..50, coordinate?)
+    -- clicks coordinate (if given) then sends Page_Up/Page_Down `scroll_amount` times; more
+    reliable than `scroll` on pages/apps that smooth-scroll (e.g. Chrome) and collapse a burst
+    of wheel events into a much smaller move than requested
   type(text<=10000 chars) -- types literal text (non-ASCII supported)
   key(text, repeat?=1..100) -- xdotool-style key or combo, e.g. "Return", "ctrl+s", "F5"
   hold_key(text, duration<=300s)
   focus_window(title? substring case-insensitive, or hwnd) -> json of the focused window
   get_clipboard() / set_clipboard(text) -- set_clipboard is an input action
   launch(command) -- only if the server has allow_launch enabled, else errors launch_disabled
+
+UI Automation actions -- prefer these over screenshot+coordinate guessing when the target has a
+label (also exposed as the dedicated `ui_tree`/`find`/`click_element` tools, same behaviour):
+  ui_tree(hwnd?, title?, max_depth?=6, max_nodes?=400, roles?) -> text tree + json nodes
+  find(text, role?, near?, hwnd?, title?, exact?=false) -> best match + up to 5 alternates
+  click_element(text, role?, near?, hwnd?, title?, exact?=false, button?="left", double?=false)
+    -- input action; finds then clicks the centre
 
 Key names: Return, Enter, Tab, Escape/Esc, BackSpace, Delete, Insert, Home, End, Page_Up, \
 Page_Down, Up/Down/Left/Right, F1..F24, space, minus, plus, equal, comma, period, slash, \
@@ -151,6 +172,38 @@ FOCUS_WINDOW_DESCRIPTION = (
     "Bring a window to the foreground, by hwnd or a case-insensitive substring of its title. "
     "Requires the desk lease (auto-acquired). Thin wrapper over computer(action='focus_window')."
 )
+UI_TREE_DESCRIPTION = (
+    "Read the Windows UI Automation tree of a window (hwnd, else a title substring, else the "
+    "foreground window) as a compact indented text listing plus structured nodes "
+    "{id,role,name,value?,rect,rect_shot,depth,enabled,offscreen}. rect is absolute screen "
+    "pixels; rect_shot is screenshot-space pixels (directly usable as a click coordinate). "
+    "Prefer this, or better yet `find`/`click_element`, over screenshot+coordinate guessing "
+    "when the target has a visible label or accessible name — it survives scrolling and "
+    "resizing that would move a hard-coded pixel coordinate off target. Needs dibs (reveals "
+    "what is in a window) but does not touch mouse/keyboard. max_depth default 6, max_nodes "
+    "default 400; roles filters to specific UIA ControlType names (e.g. 'Button', 'Edit')."
+)
+FIND_DESCRIPTION = (
+    "Find one UI element by name/value in a window (hwnd, else title substring, else "
+    "foreground), case-insensitive substring match by default (exact=true for exact match). "
+    "role filters by UIA ControlType name (e.g. 'Button'). near disambiguates when multiple "
+    "elements share a name — pass the name of a nearby landmark (e.g. near='Blue Widget' to find the "
+    "'Add to cart' button next to that product, not some other one on a long scrolled page) and "
+    "the closest match by screen distance wins. Returns the best match plus up to 5 alternates, "
+    "each with rect/rect_shot/center/center_shot (center_shot is a ready-to-click coordinate). "
+    "Raises a tool error listing nearby element names if nothing matches — use that to rephrase. "
+    "Needs dibs; does not touch mouse/keyboard. Prefer this over screenshot+coordinate guessing "
+    "whenever the target has a label: it survives scrolling that moves pixel coordinates off "
+    "target."
+)
+CLICK_ELEMENT_DESCRIPTION = (
+    "Find an element the same way `find` does (text/role/near/hwnd/title/exact) and click its "
+    "centre — one call instead of find() then computer(action='left_click', coordinate=...). "
+    "button defaults to 'left'; double=true for a double-click. Requires the desk lease "
+    "(auto-acquired) like any other input action, and raises the same not_found error as `find` "
+    "if nothing matches. Prefer this over screenshot+coordinate clicking whenever the target has "
+    "a visible label or accessible name."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +219,8 @@ def _seconds_until(iso_ts: Any) -> int | None:
         ts = iso_ts.replace("Z", "+00:00")
         dt = datetime.fromisoformat(ts)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        remaining = (dt - datetime.now(timezone.utc)).total_seconds()
+            dt = dt.replace(tzinfo=UTC)
+        remaining = (dt - datetime.now(UTC)).total_seconds()
     except ValueError:
         return None
     return max(0, round(remaining))
@@ -223,6 +276,9 @@ def _format_hub_error(exc: HubError) -> str:
 
     if exc.code == "paused":
         reason = payload.get("reason") or exc.detail
+        waited = payload.get("waited_s")
+        if waited is not None:
+            return f"paused: {reason} (waited {waited}s; human still active)"
         return f"paused: {reason}"
     if exc.code == "launch_disabled":
         return "launch is disabled on this dibs server (config allow_launch=false)"
@@ -250,7 +306,9 @@ def _result_to_content(result: Any) -> list[Any]:
     return parts
 
 
-async def _run_action(hub: Hub, action: dict[str, Any]) -> list[Any]:
+async def _run_action(
+    hub: Hub, action: dict[str, Any], *, screenshot_after: bool = False
+) -> list[Any]:
     agent = _require_agent()
     try:
         result = await hub.run(
@@ -258,7 +316,19 @@ async def _run_action(hub: Hub, action: dict[str, Any]) -> list[Any]:
         )
     except HubError as exc:
         raise ToolError(_format_hub_error(exc)) from exc
-    return _result_to_content(result)
+    parts = _result_to_content(result)
+    if screenshot_after:
+        shot_action: dict[str, Any] = {"action": "screenshot"}
+        if action.get("screen") is not None:
+            shot_action["screen"] = action["screen"]
+        try:
+            shot_result = await hub.run(
+                agent, shot_action, auto_lease=True, wait_s=hub.settings.auto_lease_wait_s
+            )
+        except HubError as exc:
+            raise ToolError(_format_hub_error(exc)) from exc
+        parts.extend(_result_to_content(shot_result))
+    return parts
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +359,15 @@ def _register_tools(mcp: FastMCP, hub: Hub) -> None:
         title: str | None = None,
         hwnd: int | None = None,
         command: str | None = None,
+        role: str | None = None,
+        near: str | None = None,
+        exact: bool | None = None,
+        max_depth: int | None = None,
+        max_nodes: int | None = None,
+        roles: list[str] | None = None,
+        button: str | None = None,
+        double: bool | None = None,
+        screenshot_after: bool = False,
     ) -> list[Any]:
         action_dict: dict[str, Any] = {"action": action}
         for key, value in (
@@ -304,10 +383,18 @@ def _register_tools(mcp: FastMCP, hub: Hub) -> None:
             ("title", title),
             ("hwnd", hwnd),
             ("command", command),
+            ("role", role),
+            ("near", near),
+            ("exact", exact),
+            ("max_depth", max_depth),
+            ("max_nodes", max_nodes),
+            ("roles", roles),
+            ("button", button),
+            ("double", double),
         ):
             if value is not None:
                 action_dict[key] = value
-        return await _run_action(hub, action_dict)
+        return await _run_action(hub, action_dict, screenshot_after=screenshot_after)
 
     @mcp.tool(description=DESK_STATUS_DESCRIPTION)
     async def desk_status() -> str:
@@ -342,6 +429,72 @@ def _register_tools(mcp: FastMCP, hub: Hub) -> None:
             action_dict["title"] = title
         if hwnd is not None:
             action_dict["hwnd"] = hwnd
+        return await _run_action(hub, action_dict)
+
+    @mcp.tool(description=UI_TREE_DESCRIPTION, structured_output=False)
+    async def ui_tree(
+        hwnd: int | None = None,
+        title: str | None = None,
+        max_depth: int | None = None,
+        max_nodes: int | None = None,
+        roles: list[str] | None = None,
+    ) -> list[Any]:
+        action_dict: dict[str, Any] = {"action": "ui_tree"}
+        for key, value in (
+            ("hwnd", hwnd),
+            ("title", title),
+            ("max_depth", max_depth),
+            ("max_nodes", max_nodes),
+            ("roles", roles),
+        ):
+            if value is not None:
+                action_dict[key] = value
+        return await _run_action(hub, action_dict)
+
+    @mcp.tool(description=FIND_DESCRIPTION, structured_output=False)
+    async def find(
+        text: str,
+        role: str | None = None,
+        near: str | None = None,
+        hwnd: int | None = None,
+        title: str | None = None,
+        exact: bool | None = None,
+    ) -> list[Any]:
+        action_dict: dict[str, Any] = {"action": "find", "text": text}
+        for key, value in (
+            ("role", role),
+            ("near", near),
+            ("hwnd", hwnd),
+            ("title", title),
+            ("exact", exact),
+        ):
+            if value is not None:
+                action_dict[key] = value
+        return await _run_action(hub, action_dict)
+
+    @mcp.tool(description=CLICK_ELEMENT_DESCRIPTION, structured_output=False)
+    async def click_element(
+        text: str,
+        role: str | None = None,
+        near: str | None = None,
+        hwnd: int | None = None,
+        title: str | None = None,
+        exact: bool | None = None,
+        button: str | None = None,
+        double: bool | None = None,
+    ) -> list[Any]:
+        action_dict: dict[str, Any] = {"action": "click_element", "text": text}
+        for key, value in (
+            ("role", role),
+            ("near", near),
+            ("hwnd", hwnd),
+            ("title", title),
+            ("exact", exact),
+            ("button", button),
+            ("double", double),
+        ):
+            if value is not None:
+                action_dict[key] = value
         return await _run_action(hub, action_dict)
 
 
