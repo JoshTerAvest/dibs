@@ -16,7 +16,7 @@ class PresenceConfig(BaseModel):
     consent_timeout_s: float = 60
     consent_grant_s: float = 300
     deny_cooldown_s: float = 120
-    consent_grace_s: float = 3.0
+    consent_grace_s: float = 5.0
     revoke_after_s: float = 2.0
 
 

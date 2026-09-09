@@ -23,9 +23,10 @@ class FakePresence:
     seconds-since-human < idle_after_s) but lets a test force a definite state instead of
     waiting on real timers or real hardware."""
 
-    def __init__(self, idle_after_s, on_human_input=None):
+    def __init__(self, idle_after_s, on_human_input=None, on_escape=None):
         self.idle_after_s = idle_after_s
         self.on_human_input = on_human_input
+        self.on_escape = on_escape
         self._last_human_monotonic: float | None = None
         self._move_streak_start: float | None = None
         self.started = False
@@ -85,6 +86,13 @@ class FakePresence:
                 self.on_human_input()
             else:
                 self.on_human_input(kind)
+
+    def fire_escape(self) -> None:
+        """Simulate a real Escape press: the escape hook first, then the normal key attribution,
+        exactly as Presence._on_press does."""
+        if self.on_escape:
+            self.on_escape()
+        self.fire_human_input("key")
 
 
 @pytest.fixture
@@ -774,3 +782,63 @@ def test_wait_s_zero_returns_423_immediately(make_client, fake_presence):
         elapsed = time_mod.monotonic() - start
         assert resp.status_code == 423
         assert elapsed < 0.3
+
+
+# ---------------------------------------------------------------------------
+# grace cancel: Esc and the band's Cancel button
+# ---------------------------------------------------------------------------
+
+
+def test_escape_during_grace_hands_the_desk_back(make_client, fake_presence):
+    with make_client(mode="hands_off", presence={"consent_grace_s": 5.0}) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        assert hub._takeover_grace_active()
+
+        hub._presence.fire_escape()
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is None
+        assert not hub._takeover_grace_active()
+        assert ("hide_grace", (), {}) in hub.overlay.calls
+        rows = client.get("/v1/audit").json()
+        cancel = [r for r in rows if r["action"] == "grace_cancelled"]
+        assert cancel and cancel[-1]["input"]["via"] == "esc"
+
+
+def test_escape_outside_grace_is_just_a_key(make_client, fake_presence):
+    with make_client(mode="hands_off", presence={"consent_grace_s": 0}) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+
+        hub._presence.fire_escape()
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True  # a key press is a revoke-tier takeover
+        assert state["lease"]["holder"] is None
+        rows = client.get("/v1/audit").json()
+        assert not [r for r in rows if r["action"] == "grace_cancelled"]
+        assert ("hide_grace", (), {}) not in hub.overlay.calls
+
+
+def test_cancel_button_callback_hands_the_desk_back(make_client, fake_presence):
+    with make_client(mode="hands_off", presence={"consent_grace_s": 5.0}) as client:
+        hub = client.app.state.hub
+        agent = register(client, "agent-a")
+        client.post("/v1/lease", json={}, headers=auth_headers(agent["token"]))
+        show = [c for c in hub.overlay.calls if c[0] == "show_grace"]
+        assert show and show[-1][1][1] == "agent-a"  # the band names the agent
+
+        hub._grace_cancelled()
+        time_mod.sleep(0.05)
+
+        state = client.get("/v1/state").json()
+        assert state["paused"] is True
+        assert state["lease"]["holder"] is None
+        rows = client.get("/v1/audit").json()
+        assert [r for r in rows if r["action"] == "grace_cancelled"][-1]["input"]["via"] == "button"

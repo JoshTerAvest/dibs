@@ -214,6 +214,7 @@ class Hub:
         self._presence = presence.Presence(
             idle_after_s=settings.presence.idle_after_s,
             on_human_input=self._on_human_input,
+            on_escape=self._on_human_escape,
         )
         self.overlay = overlay.create(settings)
         self.request_shutdown: Callable[[], None] | None = None  # set by `dibs serve`
@@ -541,7 +542,7 @@ class Hub:
             # Grant without a fresh prompt (hands_off mode, or an existing consent window) --
             # the human may still be at the keyboard from typing the request, so grace applies
             # here too (item 1).
-            self._arm_takeover_grace()
+            self._arm_takeover_grace(agent.name)
             return await self._lease.acquire(agent.agent_id, agent.name, ttl_s=ttl_s, wait_s=0)
 
         if self._pending_consent is None:
@@ -622,7 +623,7 @@ class Hub:
             self._consent_windows[p.agent_id] = now + self.settings.presence.consent_grant_s
             # The human's own accept gesture (hotkey release, mouse-off-button, dashboard
             # click) must not read as a takeover (item 1).
-            self._arm_takeover_grace()
+            self._arm_takeover_grace(getattr(p, "name", None) or p.agent_id)
         elif decision == "deny":
             self._deny_cooldowns[p.agent_id] = now + self.settings.presence.deny_cooldown_s
         self._consent_recent.append(
@@ -727,7 +728,7 @@ class Hub:
 
     # ---- human presence / takeover (SPEC-v0.2 §2.3) ----
 
-    def _arm_takeover_grace(self) -> None:
+    def _arm_takeover_grace(self, agent_name: str | None = None) -> None:
         """Ignore human input for `presence.consent_grace_s` after a consent grant (item 1)."""
         grace = max(0.0, self.settings.presence.consent_grace_s)
         now_mono = time.monotonic()
@@ -737,18 +738,56 @@ class Hub:
         # Belt-and-braces: also tell presence this window is agent-attributable so it doesn't
         # count toward human_active() either.
         self._presence.agent_input_until(armed_at)
-        self._start_grace_countdown(grace)
+        self._start_grace_countdown(grace, agent_name)
 
-    def _start_grace_countdown(self, grace: float) -> None:
+    def _start_grace_countdown(self, grace: float, agent_name: str | None = None) -> None:
         """Big centred "hands off in N" cue on the overlay for the grace window. One call; the
         overlay's own timer counts it down. (The first cut posted per-second banner notices in
         13 px text and the human never saw them.)"""
         if grace <= 0:
             return
+        if agent_name is None:
+            holder = self._lease.snapshot()["holder"]
+            agent_name = holder["name"] if holder else None
         try:
-            self.overlay.show_grace(grace)
+            self.overlay.show_grace(grace, agent=agent_name, on_cancel=self._grace_cancelled)
         except Exception:
             logger.exception("overlay.show_grace failed")
+
+    def _grace_cancelled(self) -> None:
+        """Cancel button on the grace band (overlay thread): the human wants the desk back now.
+        Same effect as the take-back hotkey: revoke the lease and pause."""
+        self._call_on_loop(self._cancel_grace, "button")
+
+    def _on_human_escape(self) -> None:
+        """Escape pressed (pynput thread). Only meaningful while the grace window is open;
+        any other time Escape is just a key press and the normal takeover rules apply."""
+        self._call_on_loop(self._cancel_grace, "esc")
+
+    def _call_on_loop(self, fn: Callable[..., None], *args: Any) -> None:
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(fn, *args)
+        else:
+            fn(*args)
+
+    def _cancel_grace(self, source: str) -> None:
+        if not self._takeover_grace_active():
+            return  # already cancelled (Esc reaches us twice: the band's wndproc and pynput)
+        self._takeover_armed_at = 0.0
+        try:
+            self.overlay.hide_grace()
+        except Exception:
+            logger.exception("overlay.hide_grace failed")
+        self._audit.record(
+            agent_id="human",
+            action="grace_cancelled",
+            input_data={"via": source},
+            ok=True,
+            error=None,
+            duration_ms=0,
+        )
+        self.human_release()
 
     def _takeover_grace_active(self) -> bool:
         return time.monotonic() < self._takeover_armed_at

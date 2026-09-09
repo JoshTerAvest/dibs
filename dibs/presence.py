@@ -52,10 +52,16 @@ _CHORD_MODIFIERS: dict[str, frozenset[str]] = {
 
 class Presence:
     def __init__(
-        self, idle_after_s: float, on_human_input: Callable[..., None] | None = None
+        self,
+        idle_after_s: float,
+        on_human_input: Callable[..., None] | None = None,
+        on_escape: Callable[[], None] | None = None,
     ) -> None:
         self.idle_after_s = idle_after_s
         self.on_human_input = on_human_input
+        # Fired on a real (non-injected) Escape press, before the normal "key" attribution.
+        # The hub uses it to cancel the consent-grace window and hand the desk back.
+        self.on_escape = on_escape
 
         self._lock = threading.Lock()
         self._last_human_monotonic: float | None = None
@@ -238,7 +244,21 @@ class Presence:
         if self._chord_active():
             # ctrl+alt+shift+<key> -- one of our own hotkeys (or shaped exactly like one).
             return
+        if self.on_escape is not None and self._is_escape(key):
+            try:
+                self.on_escape()
+            except Exception:
+                logger.exception("on_escape callback failed")
         self._register_human("key")
+
+    @staticmethod
+    def _is_escape(key: Any) -> bool:
+        try:
+            from pynput import keyboard
+
+            return key == keyboard.Key.esc
+        except Exception:
+            return False
 
     def _on_release(self, key: Any, injected: bool = False) -> None:
         was_chord = self._chord_active()

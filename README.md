@@ -305,7 +305,7 @@ settable via env var `DIBS_<KEY>` (`__` for nesting, e.g.
 | `presence.consent_timeout_s` | `60` | how long an unanswered consent request stays pending |
 | `presence.consent_grant_s` | `300` | how long a granted consent window lasts before asking again |
 | `presence.deny_cooldown_s` | `120` | how long a denied agent gets an automatic no |
-| `presence.consent_grace_s` | `3.0` | after a consent grant (or a promptless grant), how long human input is ignored so accepting the prompt doesn't itself trigger a takeover |
+| `presence.consent_grace_s` | `5.0` | after a consent grant (or a promptless grant), how long human input is ignored so accepting the prompt does not read as a takeover. Every monitor dims and a full-width band counts it down: dibs wordmark, which agent got the desk, HANDS OFF N, and a Cancel button. Esc or Cancel hands the desk straight back. |
 | `presence.revoke_after_s` | `2.0` | how long continuous mouse movement/scroll can run before it escalates from a pause (lease kept) to a full revoke |
 | `overlay.enabled` | `true` | show the cursor halo / banner / consent prompt |
 | `overlay.halo_color` | `#00e5ff` | cursor halo color |

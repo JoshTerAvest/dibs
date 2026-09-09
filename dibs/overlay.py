@@ -66,8 +66,19 @@ class OverlayBase:
     def notify(self, text: str, seconds: float = 2.0) -> None:
         pass
 
-    def show_grace(self, seconds: float = 3.0) -> None:
-        """Big centred "hands off" countdown for the consent-to-stillness grace window."""
+    def show_grace(
+        self,
+        seconds: float = 5.0,
+        agent: str | None = None,
+        on_cancel: Callable[[], None] | None = None,
+    ) -> None:
+        """Full-width "hands off" countdown for the consent-to-stillness grace window, with the
+        rest of the screen dimmed, a dibs wordmark naming the agent, and a Cancel button that
+        hands the desk back to the human."""
+        pass
+
+    def hide_grace(self) -> None:
+        """Clear the countdown early (Esc / cancel)."""
         pass
 
 
@@ -110,8 +121,11 @@ class NullOverlay(OverlayBase):
     def notify(self, text, seconds=2.0):
         self._rec("notify", text, seconds)
 
-    def show_grace(self, seconds=3.0):
-        self._rec("show_grace", seconds)
+    def show_grace(self, seconds=5.0, agent=None, on_cancel=None):
+        self._rec("show_grace", seconds, agent)
+
+    def hide_grace(self):
+        self._rec("hide_grace")
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +146,8 @@ WM_QUIT = 0x0012
 WM_TIMER = 0x0113
 WM_APP = 0x8000
 WM_LBUTTONDOWN = 0x0201
+WM_KEYDOWN = 0x0100
+VK_ESCAPE = 0x1B
 
 AC_SRC_ALPHA = 1
 ULW_ALPHA = 2
@@ -236,6 +252,21 @@ _user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, ctypes.c_uint, ctyp
 _user32.SetTimer.restype = ctypes.c_size_t
 _user32.PostMessageW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
 _user32.PostMessageW.restype = wintypes.BOOL
+_user32.GetForegroundWindow.argtypes = []
+_user32.GetForegroundWindow.restype = wintypes.HWND
+_user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+_user32.SetForegroundWindow.restype = wintypes.BOOL
+_user32.SetFocus.argtypes = [wintypes.HWND]
+_user32.SetFocus.restype = wintypes.HWND
+_user32.IsWindow.argtypes = [wintypes.HWND]
+_user32.IsWindow.restype = wintypes.BOOL
+_user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.c_void_p]
+_user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+_user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+_user32.AttachThreadInput.restype = wintypes.BOOL
+_kernel32 = ctypes.windll.kernel32
+_kernel32.GetCurrentThreadId.argtypes = []
+_kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
 _gdi32.CreateCompatibleDC.restype = wintypes.HDC
 _gdi32.CreateDIBSection.argtypes = [
@@ -382,12 +413,20 @@ class Overlay(OverlayBase):
         self._notify_text: str | None = None
         self._notify_until = 0.0
         self._grace_until = 0.0
+        self._grace_total = 0.0
         self._grace_last_key: tuple[int, int] | None = None
+        self._grace_agent: str | None = None
+        self._grace_cancel_cb: Callable[[], None] | None = None
+        self._grace_btn: tuple[int, int, int, int] | None = None  # cancel button, window coords
+        self._grace_dimmed = False
+        self._grace_prev_fg = 0  # window that had focus before the band took it
 
         self._hwnd_msg = 0
         self._hwnd_cursor = 0
         self._hwnd_banner = 0
-        self._hwnd_grace = 0
+        self._hwnds_grace = []
+        self._hwnds_dim = []
+        self._class_name: Any = None
         self._hwnds_edges = []
         self._hwnd_consent = 0
 
@@ -465,8 +504,15 @@ class Overlay(OverlayBase):
     def notify(self, text, seconds=2.0):
         self._post(self._impl_notify, text, float(seconds))
 
-    def show_grace(self, seconds=3.0):
-        self._post(self._impl_show_grace, float(seconds))
+    def show_grace(self, seconds=5.0, agent=None, on_cancel=None):
+        self._post(self._impl_show_grace, float(seconds), agent, on_cancel)
+
+    def hide_grace(self):
+        self._post(self._impl_hide_grace)
+
+    def _impl_hide_grace(self):
+        self._grace_until = 0.0
+        self._update_grace(time.monotonic())
 
     def _run(self) -> None:
         try:
@@ -476,7 +522,10 @@ class Overlay(OverlayBase):
 
             wc = WNDCLASSW()
             wc.lpfnWndProc = self._wndproc_c
-            class_name = ctypes.c_wchar_p("DibsOverlayClass")
+            # One window class per Overlay instance: the class carries this instance's wndproc,
+            # so a second Overlay in the same process (tests) must not reuse the first one's.
+            self._class_name = ctypes.c_wchar_p(f"DibsOverlayClass{id(self):x}")
+            class_name = self._class_name
             wc.lpszClassName = class_name
             wc.hInstance = 0
             _user32.RegisterClassW(ctypes.byref(wc))
@@ -496,8 +545,10 @@ class Overlay(OverlayBase):
                 None,
             )
 
-            def create_layered(hit_test=False):
-                ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE
+            def create_layered(hit_test=False, activatable=False):
+                ex = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW
+                if not activatable:
+                    ex |= WS_EX_NOACTIVATE
                 if not hit_test:
                     ex |= WS_EX_TRANSPARENT
                 hwnd = _user32.CreateWindowExW(
@@ -519,7 +570,13 @@ class Overlay(OverlayBase):
 
             self._hwnd_cursor = create_layered()
             self._hwnd_banner = create_layered()
-            self._hwnd_grace = create_layered()
+            self._hwnds_dim = [create_layered() for _ in self._monitors]
+            # The grace band is the one overlay window allowed to take focus: while it is up the
+            # human is meant to be hands-off, so their Esc must land here (and cancel), not in
+            # whatever app was focused. Focus is handed back when the band clears.
+            self._hwnds_grace = [
+                create_layered(hit_test=True, activatable=True) for _ in self._monitors
+            ]
             self._hwnds_edges = [create_layered() for _ in range(4 * len(self._monitors))]
             self._hwnd_consent = create_layered(hit_test=True)
 
@@ -544,12 +601,18 @@ class Overlay(OverlayBase):
                 _user32.DestroyWindow(self._hwnd_cursor)
             if self._hwnd_banner:
                 _user32.DestroyWindow(self._hwnd_banner)
-            if self._hwnd_grace:
-                _user32.DestroyWindow(self._hwnd_grace)
+            for h in self._hwnds_grace:
+                _user32.DestroyWindow(h)
+            for h in self._hwnds_dim:
+                _user32.DestroyWindow(h)
             for h in self._hwnds_edges:
                 _user32.DestroyWindow(h)
             if self._hwnd_consent:
                 _user32.DestroyWindow(self._hwnd_consent)
+            try:
+                _user32.UnregisterClassW(self._class_name, None)
+            except Exception:
+                pass
 
     def _wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_TIMER:
@@ -570,6 +633,15 @@ class Overlay(OverlayBase):
             x = lparam & 0xFFFF
             y = (lparam >> 16) & 0xFFFF
             self._on_consent_click(x, y)
+            return 0
+        elif msg == WM_LBUTTONDOWN and hwnd in self._hwnds_grace:
+            x = lparam & 0xFFFF
+            y = (lparam >> 16) & 0xFFFF
+            self._on_grace_click(x, y)
+            return 0
+        elif msg == WM_KEYDOWN and hwnd in self._hwnds_grace:
+            if wparam == VK_ESCAPE:
+                self._cancel_grace_from_ui()
             return 0
         elif msg == WM_QUIT:
             _user32.PostQuitMessage(0)
@@ -620,10 +692,96 @@ class Overlay(OverlayBase):
         self._notify_until = time.monotonic() + max(0.0, seconds)
         self._update_all()
 
-    def _impl_show_grace(self, seconds):
+    def _impl_show_grace(self, seconds, agent=None, on_cancel=None):
         self._grace_until = time.monotonic() + max(0.0, seconds)
+        self._grace_total = max(0.001, seconds)
+        self._grace_agent = agent
+        self._grace_cancel_cb = on_cancel
         self._grace_last_key = None
         self._update_grace(time.monotonic())
+        self._take_focus()
+
+    def _on_grace_click(self, x, y):
+        btn = self._grace_btn
+        if not btn or self._grace_until <= time.monotonic():
+            return
+        if btn[0] <= x <= btn[2] and btn[1] <= y <= btn[3]:
+            self._cancel_grace_from_ui()
+
+    def _cancel_grace_from_ui(self):
+        """Cancel button or Esc on the band: clear it, give focus back, tell the hub."""
+        if self._grace_until <= time.monotonic():
+            return
+        cb = self._grace_cancel_cb
+        self._grace_until = 0.0
+        self._update_grace(time.monotonic())
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                log.exception("dibs.overlay grace cancel callback failed")
+
+    def _take_focus(self):
+        """Foreground the band on the monitor that currently has focus so Esc lands on it.
+        Windows only lets the foreground thread change focus, so attach to it first."""
+        if not self._hwnds_grace:
+            return
+        try:
+            prev = _user32.GetForegroundWindow()
+            if prev in self._hwnds_grace:
+                return
+            self._grace_prev_fg = prev
+            target = self._hwnds_grace[0]
+            fg_thread = _user32.GetWindowThreadProcessId(prev, None) if prev else 0
+            me = _kernel32.GetCurrentThreadId()
+            attached = (
+                bool(fg_thread)
+                and fg_thread != me
+                and _user32.AttachThreadInput(fg_thread, me, True)
+            )
+            try:
+                _user32.SetForegroundWindow(target)
+                _user32.SetFocus(target)
+            finally:
+                if attached:
+                    _user32.AttachThreadInput(fg_thread, me, False)
+        except Exception:
+            log.exception("dibs.overlay could not take focus for the grace band")
+
+    def _give_focus_back(self):
+        prev, self._grace_prev_fg = self._grace_prev_fg, 0
+        if not prev or not _user32.IsWindow(prev):
+            return
+        try:
+            if _user32.GetForegroundWindow() not in self._hwnds_grace:
+                return  # the human already moved on; do not yank focus around
+            me = _kernel32.GetCurrentThreadId()
+            prev_thread = _user32.GetWindowThreadProcessId(prev, None)
+            attached = (
+                bool(prev_thread)
+                and prev_thread != me
+                and _user32.AttachThreadInput(prev_thread, me, True)
+            )
+            try:
+                _user32.SetForegroundWindow(prev)
+            finally:
+                if attached:
+                    _user32.AttachThreadInput(prev_thread, me, False)
+        except Exception:
+            log.exception("dibs.overlay could not give focus back after the grace band")
+
+    def _set_dim(self, on: bool):
+        """Dim every monitor behind the countdown. Height is one pixel short of the monitor so
+        Windows does not treat it as a full-screen app and flip on Do Not Disturb."""
+        if on == self._grace_dimmed:
+            return
+        self._grace_dimmed = on
+        for h, mon in zip(self._hwnds_dim, self._monitors, strict=False):
+            if on:
+                img = Image.new("RGBA", (mon["w"], max(1, mon["h"] - 1)), (0, 0, 0, 150))
+                _update_layered(h, img, mon["x"], mon["y"], 255)
+            else:
+                _update_layered(h, Image.new("RGBA", (1, 1)), 0, 0, 0)
 
     def _impl_prompt_consent(self, request_id, name, purpose, timeout_s, on_decision):
         if self._consent_state:
@@ -720,49 +878,90 @@ class Overlay(OverlayBase):
         self._update_banner()
 
     def _update_grace(self, t):
-        """Centred pill on the primary monitor: a big number counting down the grace window and
-        a one-line instruction. Redrawn only when the number or the fade step changes (the timer
-        ticks every 33 ms). The first cut of this cue was a 13 px strip under the top banner and
-        nobody saw it."""
-        if not self._hwnd_grace:
+        """The consent-grace cue: every monitor dims, and a full-width band across the middle of
+        the primary monitor shows a dibs wordmark, which agent just got the desk, a big HANDS OFF
+        countdown, a draining progress bar, and a Cancel button that hands the desk straight back.
+        Redrawn from the overlay timer only when the number, the bar step, or the fade changes.
+        (The first cut of this cue was a 13 px strip under the top banner and nobody saw it.)"""
+        if not self._hwnds_grace:
             return
         remaining = self._grace_until - t
         if remaining <= 0:
-            if self._grace_last_key is not None:
+            if self._grace_last_key is not None or self._grace_dimmed:
                 self._grace_last_key = None
-                _update_layered(self._hwnd_grace, Image.new("RGBA", (1, 1)), 0, 0, 0)
+                self._grace_btn = None
+                for h in self._hwnds_grace:
+                    _update_layered(h, Image.new("RGBA", (1, 1)), 0, 0, 0)
+                self._set_dim(False)
+                self._give_focus_back()
             return
+        self._set_dim(True)
         n = int(math.ceil(remaining))
         alpha = int(255 * min(1.0, remaining / 0.4))  # fade out over the last 0.4 s
-        key = (n, alpha // 16)
+        frac = max(0.0, min(1.0, remaining / self._grace_total))
+        key = (n, alpha // 16 + 100 * int(frac * 24))
         if key == self._grace_last_key:
             return
         self._grace_last_key = key
 
-        w, h = 460, 170
+        rgb = _hex_to_rgb(self.halo_color)
+        bg = _hex_to_rgb("#14161c")
+        # One band per monitor, so it is in front of the human wherever they are looking.
+        for hwnd, scr in zip(self._hwnds_grace, self._monitors, strict=False):
+            self._draw_grace_band(hwnd, scr, n, frac, alpha, rgb, bg)
+
+    def _draw_grace_band(self, hwnd, scr, n, frac, alpha, rgb, bg):
+        w, h = scr["w"], 150
         img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
-        rgb = _hex_to_rgb(self.halo_color)
-        draw.rounded_rectangle(
-            (0, 0, w - 1, h - 1),
-            radius=28,
-            fill=(*(_hex_to_rgb("#14161c")), 236),
-            outline=(*rgb, 255),
-            width=3,
-        )
-        font_big = _create_font(84, bold=True)
-        font_lbl = _create_font(22)
-        num = str(n)
-        label = "hands off the mouse and keyboard"
-        nw = int(draw.textlength(num, font=font_big))
-        lw = int(draw.textlength(label, font=font_lbl))
-        draw.text(((w - nw) // 2, 6), num, fill=(*rgb, 255), font=font_big)
-        draw.text(((w - lw) // 2, h - 44), label, fill="#f5f5f7", font=font_lbl)
+        draw.rectangle((0, 0, w - 1, h - 1), fill=(*bg, 232))
+        draw.rectangle((0, 0, w - 1, 3), fill=(*rgb, 255))
+        draw.rectangle((0, h - 4, w - 1, h - 1), fill=(*rgb, 255))
 
-        scr = self._monitors[0] if self._monitors else {"x": 0, "y": 0, "w": 1920, "h": 1080}
-        x = scr["x"] + (scr["w"] - w) // 2
+        # wordmark + who is asking (top-left)
+        font_brand = _create_font(26, bold=True)
+        font_who = _create_font(16)
+        draw.text((28, 14), "dibs", fill=(*rgb, 255), font=font_brand)
+        who = f"{self._grace_agent} has the desk" if self._grace_agent else "an agent has the desk"
+        draw.text(
+            (28 + int(draw.textlength("dibs", font=font_brand)) + 14, 21),
+            who,
+            fill="#c9ced8",
+            font=font_who,
+        )
+
+        # the countdown (centre)
+        font_big = _create_font(72, bold=True)
+        font_sub = _create_font(17)
+        text = f"HANDS OFF   {n}"
+        tw = int(draw.textlength(text, font=font_big))
+        draw.text(((w - tw) // 2, 24), text, fill=(*rgb, 255), font=font_big)
+        sub = "keep your hands off the mouse and keyboard until this clears"
+        sw = int(draw.textlength(sub, font=font_sub))
+        draw.text(((w - sw) // 2, 108), sub, fill="#9aa0ad", font=font_sub)
+
+        # cancel button (right): hand the desk back to the human
+        bw, bh = 170, 46
+        bx0, by0 = w - bw - 28, (h - bh) // 2
+        self._grace_btn = (bx0, by0, bx0 + bw, by0 + bh)
+        draw.rounded_rectangle(
+            self._grace_btn,
+            radius=10,
+            fill=(*(_hex_to_rgb("#2a1013")), 255),
+            outline=(*(_hex_to_rgb("#e2434b")), 255),
+            width=2,
+        )
+        font_btn = _create_font(16, bold=True)
+        label = "Cancel (Esc): I need the desk"
+        lw = int(draw.textlength(label, font=font_btn))
+        draw.text((bx0 + (bw - lw) // 2, by0 + 12), label, fill="#ffb4b8", font=font_btn)
+
+        # progress bar draining right-to-left along the bottom edge
+        draw.rectangle((0, h - 12, int(w * frac), h - 5), fill=(*rgb, 200))
+
+        x = scr["x"]
         y = scr["y"] + (scr["h"] - h) // 2
-        _update_layered(self._hwnd_grace, img, x, y, alpha)
+        _update_layered(hwnd, img, x, y, alpha)
 
     def _render_cursor_base(self):
         img = Image.new("RGBA", (240, 240), (0, 0, 0, 0))

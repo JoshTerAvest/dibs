@@ -21,7 +21,7 @@ presence:
   consent_timeout_s: 60
   consent_grant_s: 300
   deny_cooldown_s: 120
-  consent_grace_s: 3.0   # ignore human input this long after a consent grant (accepting bleeds into takeover otherwise)
+  consent_grace_s: 5.0   # ignore human input this long after a consent grant (accepting bleeds into takeover otherwise)
   revoke_after_s: 2.0    # continuous mouse move/scroll longer than this escalates pause -> revoke
 overlay:
   enabled: true
