@@ -14,8 +14,9 @@ import math
 import queue
 import threading
 import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -177,11 +178,11 @@ class BITMAPINFO(ctypes.Structure):
 
 
 WNDPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_long, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
+    ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM
 )
 
 _user32.DefWindowProcW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
-_user32.DefWindowProcW.restype = ctypes.c_long
+_user32.DefWindowProcW.restype = ctypes.c_ssize_t
 _user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
 _user32.GetWindowLongW.restype = ctypes.c_long
 _user32.CreateWindowExW.argtypes = [
@@ -199,6 +200,52 @@ _user32.CreateWindowExW.argtypes = [
     wintypes.LPVOID,
 ]
 _user32.CreateWindowExW.restype = wintypes.HWND
+
+# Every handle-carrying call needs an explicit signature: without one ctypes treats HDC/HBITMAP/
+# HGDIOBJ values as C int, and on 64-bit Windows those handles routinely exceed 2**31, which
+# surfaced as "ctypes.ArgumentError: argument 1: OverflowError: int too long to convert" inside
+# _update_layered on every timer tick once a large handle came back from GetDC/CreateDIBSection.
+_user32.GetDC.argtypes = [wintypes.HWND]
+_user32.GetDC.restype = wintypes.HDC
+_user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+_user32.ReleaseDC.restype = ctypes.c_int
+_user32.UpdateLayeredWindow.argtypes = [
+    wintypes.HWND,
+    wintypes.HDC,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    wintypes.HDC,
+    ctypes.c_void_p,
+    wintypes.COLORREF,
+    ctypes.c_void_p,
+    wintypes.DWORD,
+]
+_user32.UpdateLayeredWindow.restype = wintypes.BOOL
+_user32.DestroyWindow.argtypes = [wintypes.HWND]
+_user32.DestroyWindow.restype = wintypes.BOOL
+_user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+_user32.ShowWindow.restype = wintypes.BOOL
+_user32.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, ctypes.c_uint, ctypes.c_void_p]
+_user32.SetTimer.restype = ctypes.c_size_t
+_user32.PostMessageW.argtypes = [wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM]
+_user32.PostMessageW.restype = wintypes.BOOL
+_gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+_gdi32.CreateCompatibleDC.restype = wintypes.HDC
+_gdi32.CreateDIBSection.argtypes = [
+    wintypes.HDC,
+    ctypes.c_void_p,
+    ctypes.c_uint,
+    ctypes.POINTER(ctypes.c_void_p),
+    wintypes.HANDLE,
+    wintypes.DWORD,
+]
+_gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+_gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+_gdi32.SelectObject.restype = wintypes.HGDIOBJ
+_gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+_gdi32.DeleteObject.restype = wintypes.BOOL
+_gdi32.DeleteDC.argtypes = [wintypes.HDC]
+_gdi32.DeleteDC.restype = wintypes.BOOL
 
 
 def _get_ex_style(hwnd: int) -> int:
