@@ -610,8 +610,8 @@ class Hub:
         return "timeout", p
 
     def _maybe_auto_allow_on_idle(self) -> tuple[str, ConsentRequest] | None:
-        """Disabled on purpose (v0.2 design decision): a pending request never resolves itself because the
-        human walked away. It waits for a decision or times out to deny."""
+        """Disabled on purpose (v0.2 design decision): a pending request never resolves itself
+        because the human walked away. It waits for a decision or times out to deny."""
         return None
 
     def _finish_consent(self, p: ConsentRequest, decision: str) -> None:
@@ -740,24 +740,15 @@ class Hub:
         self._start_grace_countdown(grace)
 
     def _start_grace_countdown(self, grace: float) -> None:
-        if self._loop is None or grace <= 0:
+        """Big centred "hands off in N" cue on the overlay for the grace window. One call; the
+        overlay's own timer counts it down. (The first cut posted per-second banner notices in
+        13 px text and the human never saw them.)"""
+        if grace <= 0:
             return
-        if self._grace_countdown_task is not None and not self._grace_countdown_task.done():
-            self._grace_countdown_task.cancel()
-
-        async def _run() -> None:
-            total = int(math.ceil(grace))
-            try:
-                for i in range(total, 0, -1):
-                    try:
-                        self.overlay.notify(f"hands off in {i}", 1.0)
-                    except Exception:
-                        logger.exception("overlay.notify failed")
-                    await asyncio.sleep(1.0)
-            except asyncio.CancelledError:
-                pass
-
-        self._grace_countdown_task = self._loop.create_task(_run())
+        try:
+            self.overlay.show_grace(grace)
+        except Exception:
+            logger.exception("overlay.show_grace failed")
 
     def _takeover_grace_active(self) -> bool:
         return time.monotonic() < self._takeover_armed_at

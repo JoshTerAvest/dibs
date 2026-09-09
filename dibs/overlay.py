@@ -66,6 +66,10 @@ class OverlayBase:
     def notify(self, text: str, seconds: float = 2.0) -> None:
         pass
 
+    def show_grace(self, seconds: float = 3.0) -> None:
+        """Big centred "hands off" countdown for the consent-to-stillness grace window."""
+        pass
+
 
 class NullOverlay(OverlayBase):
     """No-op overlay that records calls (for tests and headless runs)."""
@@ -105,6 +109,9 @@ class NullOverlay(OverlayBase):
 
     def notify(self, text, seconds=2.0):
         self._rec("notify", text, seconds)
+
+    def show_grace(self, seconds=3.0):
+        self._rec("show_grace", seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -374,10 +381,13 @@ class Overlay(OverlayBase):
         self._typing = False
         self._notify_text: str | None = None
         self._notify_until = 0.0
+        self._grace_until = 0.0
+        self._grace_last_key: tuple[int, int] | None = None
 
         self._hwnd_msg = 0
         self._hwnd_cursor = 0
         self._hwnd_banner = 0
+        self._hwnd_grace = 0
         self._hwnds_edges = []
         self._hwnd_consent = 0
 
@@ -455,6 +465,9 @@ class Overlay(OverlayBase):
     def notify(self, text, seconds=2.0):
         self._post(self._impl_notify, text, float(seconds))
 
+    def show_grace(self, seconds=3.0):
+        self._post(self._impl_show_grace, float(seconds))
+
     def _run(self) -> None:
         try:
             desk.set_dpi_aware()
@@ -506,6 +519,7 @@ class Overlay(OverlayBase):
 
             self._hwnd_cursor = create_layered()
             self._hwnd_banner = create_layered()
+            self._hwnd_grace = create_layered()
             self._hwnds_edges = [create_layered() for _ in range(4 * len(self._monitors))]
             self._hwnd_consent = create_layered(hit_test=True)
 
@@ -530,6 +544,8 @@ class Overlay(OverlayBase):
                 _user32.DestroyWindow(self._hwnd_cursor)
             if self._hwnd_banner:
                 _user32.DestroyWindow(self._hwnd_banner)
+            if self._hwnd_grace:
+                _user32.DestroyWindow(self._hwnd_grace)
             for h in self._hwnds_edges:
                 _user32.DestroyWindow(h)
             if self._hwnd_consent:
@@ -603,6 +619,11 @@ class Overlay(OverlayBase):
         self._notify_text = text
         self._notify_until = time.monotonic() + max(0.0, seconds)
         self._update_all()
+
+    def _impl_show_grace(self, seconds):
+        self._grace_until = time.monotonic() + max(0.0, seconds)
+        self._grace_last_key = None
+        self._update_grace(time.monotonic())
 
     def _impl_prompt_consent(self, request_id, name, purpose, timeout_s, on_decision):
         if self._consent_state:
@@ -683,6 +704,7 @@ class Overlay(OverlayBase):
             _update_layered(self._hwnd_cursor, Image.new("RGBA", (1, 1)), 0, 0, 0)
 
         self._update_edges(t)
+        self._update_grace(t)
 
         if self._notify_text and t >= self._notify_until:
             self._notify_text = None
@@ -696,6 +718,51 @@ class Overlay(OverlayBase):
 
     def _update_all(self):
         self._update_banner()
+
+    def _update_grace(self, t):
+        """Centred pill on the primary monitor: a big number counting down the grace window and
+        a one-line instruction. Redrawn only when the number or the fade step changes (the timer
+        ticks every 33 ms). The first cut of this cue was a 13 px strip under the top banner and
+        nobody saw it."""
+        if not self._hwnd_grace:
+            return
+        remaining = self._grace_until - t
+        if remaining <= 0:
+            if self._grace_last_key is not None:
+                self._grace_last_key = None
+                _update_layered(self._hwnd_grace, Image.new("RGBA", (1, 1)), 0, 0, 0)
+            return
+        n = int(math.ceil(remaining))
+        alpha = int(255 * min(1.0, remaining / 0.4))  # fade out over the last 0.4 s
+        key = (n, alpha // 16)
+        if key == self._grace_last_key:
+            return
+        self._grace_last_key = key
+
+        w, h = 460, 170
+        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        rgb = _hex_to_rgb(self.halo_color)
+        draw.rounded_rectangle(
+            (0, 0, w - 1, h - 1),
+            radius=28,
+            fill=(*(_hex_to_rgb("#14161c")), 236),
+            outline=(*rgb, 255),
+            width=3,
+        )
+        font_big = _create_font(84, bold=True)
+        font_lbl = _create_font(22)
+        num = str(n)
+        label = "hands off the mouse and keyboard"
+        nw = int(draw.textlength(num, font=font_big))
+        lw = int(draw.textlength(label, font=font_lbl))
+        draw.text(((w - nw) // 2, 6), num, fill=(*rgb, 255), font=font_big)
+        draw.text(((w - lw) // 2, h - 44), label, fill="#f5f5f7", font=font_lbl)
+
+        scr = self._monitors[0] if self._monitors else {"x": 0, "y": 0, "w": 1920, "h": 1080}
+        x = scr["x"] + (scr["w"] - w) // 2
+        y = scr["y"] + (scr["h"] - h) // 2
+        _update_layered(self._hwnd_grace, img, x, y, alpha)
 
     def _render_cursor_base(self):
         img = Image.new("RGBA", (240, 240), (0, 0, 0, 0))
