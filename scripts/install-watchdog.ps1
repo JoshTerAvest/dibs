@@ -27,9 +27,11 @@ if ($existing) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
+# conhost --headless: powershell.exe allocates its console before it reads -WindowStyle Hidden,
+# so an interactive-logon task flashes an empty console window on every run without it.
 $action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`"" `
+    -Execute "conhost.exe" `
+    -Argument "--headless powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`"" `
     -WorkingDirectory $root
 
 # Start 2 minutes from now and repeat indefinitely; also re-arm at every logon.
